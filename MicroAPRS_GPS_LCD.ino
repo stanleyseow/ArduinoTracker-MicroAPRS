@@ -23,15 +23,21 @@ LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
  Date : 03 July 2014
  Written by Stanley Seow
  e-mail : stanleyseow@gmail.com
+ Version : 0.2
  
- Pls flash the modem Arduino with http://unsigned.io/microaprs/
- and connect the Tx to Rx(8) and Tx to Rx(9).
+ Pls flash the modem Arduino with http://unsigned.io/microaprs/ with USBtinyISP
+ This firmware does NOT have an Arduino bootloader and run pure AVR codes. Once you
+ have done this, follow the instructions on the above URL on how to set it up.
+ We will call this Arduino/atmega328 as the "modem". 
+ 
+ To use with Arduino Tracker (this sketch), connect the Modem Tx(pin1) to Arduino Rx(pin8) and 
+ Modem Rx(pin0) to Arduino Rx(pin9).
  
  I had dropped bytes when using SoftwareSerial for the MicroAPRS modem and therefore
  I'm using AltSoftSerial instead. The GPS module is still on SoftwareSerial and 
- the hardware serial is srill used for Serial Monitor.
+ the hardware serial is still used for Serial Monitor.
  
- To use this sketch, pls change your CALLSIGN and SSID below under configModem().
+ ***** To use this sketch, pls change your CALLSIGN and SSID below under configModem().
  
  
 */
@@ -228,10 +234,10 @@ void configModem() {
   aprs.println("V0");
   delay(200);
 
-  aprs.println("c9W2SVT");  // Set SRC Callsign
+  aprs.println("cNOCALL");  // Set your Callsign here, c is the firmware command
   delay(200);
   
-  aprs.println("sc8");      // Set SRC SSID
+  aprs.println("sc8");      // Set your SSID here, I'm using 8, sc is the command
   delay(200);
 
   aprs.println("pd0");      // Disable printing DST 
