@@ -15,10 +15,10 @@ Arduino Tracker interface for MicroAPRS firmware
  Pin 4,5,6,7,12,11 connects to 20x4 LCD 
  Pin 10 - Buzzer during Radio Tx
  
- Date : 03 July 2014
- Written by Stanley Seow
- e-mail : stanleyseow@gmail.com
- Version : 0.2
+ - Date : 03 July 2014
+ - Written by Stanley Seow
+ - e-mail : stanleyseow@gmail.com
+ - Version : 0.2
  
  Pls flash the modem Arduino with http://unsigned.io/microaprs/ with USBtinyISP or 
  any ISP flashing tools.
