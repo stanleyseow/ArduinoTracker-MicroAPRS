@@ -5,14 +5,14 @@
 // My wiring for LCD on breadboard
 LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
 
-#define VERSION "Arduino MicroAPRS Tracker v0.2 " 
+#define VERSION "Arduino OpenTrackR v0.3 " 
 
 /* 
  
  MicroAPRS Arduino Interface Version 0.2
  
  This sketch configure the MicroAPRS for the proper callsign and ssid and
- read/write data coming in from the MicroAPRS via Serial port
+ read/write data coming in from the MicroAPRS via debug port
  
  Pin 8/9 (rx,tx) connects to Arduino with MicroAPRS firmware
  Pin 2,3 ( rx,tx ) connects to GPS module
@@ -33,9 +33,9 @@ LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
  To use with Arduino Tracker (this sketch), connect the Modem Tx(pin1) to Arduino Rx(pin8) and 
  Modem Rx(pin0) to Arduino Rx(pin9).
  
- I had dropped bytes when using SoftwareSerial for the MicroAPRS modem and therefore
- I'm using AltSoftSerial instead. The GPS module is still on SoftwareSerial and 
- the hardware serial is still used for Serial Monitor.
+ I had dropped bytes when using Softwaredebug for the MicroAPRS modem and therefore
+ I'm using AltSoftdebug instead. The GPS module is still on Softwaredebug and 
+ the hardware debug is still used for debug Monitor.
  
  ***** To use this sketch, pls change your CALLSIGN and SSID below under configModem().
  
@@ -45,24 +45,36 @@ LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
  
  06 July 2014 :-
  - added check for speed and idle speed, modify the Txinternal
- - remove all Serial Monitor output
+ - remove all debug Monitor output
  - added check for Rx bytes before sending Tx bytes, delay by 3 secs if have available bytes
+ 
+ 12 July 2014 :-
+ - Added SmartBeaconing algorithm, Tx when turn is more than 25 deg
+ - Reduce the Tx interval lower
+ 
+ 14 July 2014 :-
+ - Fixed coordinates conversion from decimal to Deg Min formula
+ - Formula to calculate distance from last Tx point so that it will Tx once the max distance 
+ is reached, 500m
+ 
+ TODO :-
+ 
+
  
  Bugs :-
  
- - Still have missed bytes when send to modem using AltSoftSerial, this caused packets not transmitted to RF
  - During driving/moving, the packet decoding rate is very low
+ - Packet are sometimes not decoded properly or only decoded callsign only 
  
 */
 
-
 TinyGPSPlus gps;
 
-// Connect to MicroAPRS on pin 2, 3 ( Rx, Tx )
-//SoftwareSerial aprs(8, 9);
+// Debug output to Software Serial
+//SoftwareSerial debug(8, 9);
 
-// AltSerial default on UNO is 8-Rx, 9-Tx
-AltSoftSerial aprs;
+// Altdebug default on UNO is 8-Rx, 9-Tx
+AltSoftSerial debug;
 
 // Connect to GPS module on pin 9, 10 ( Rx, Tx )
 SoftwareSerial ss(2,3);
@@ -71,21 +83,32 @@ unsigned long last = 0UL;
 
 // APRS buffers
 String inBuffer = "";
-int maxBuffer = 253;
-char charBuffer[254];
+int maxBuffer = 200;
+char charBuffer[199];
 byte bufferIndex=0;
 
-char callsign[12];
-char path[60];
-char data[100];
 
-unsigned long Txinterval = 60000;  // Initial 60 secs internal
+
+// Variable for debugging and input from SoftSerial
+byte inputIndex = 0;
+char inputString[80];
+
 bool firstTx = 1;
-unsigned long Txtimer;
+long txInterval = 60000;  // Initial 60 secs internal
+long txTimer;
+long txCounter=0;
+// Speed in km/h
+byte highSpeed = 80;
+byte lowSpeed = 40;
+
 String lastLat, lastLng;
 String latOut,lngOut,cmtOut;
 int lastCourse = 0;
-int lastSpeed = 0;
+byte lastSpeed = 0;
+
+int previousHeading, currentHeading = 0;
+float lastDecLat = 3.16925, lastDecLng =  101.64972;
+float distanceLast, distanceHome = 0.0;
 
 void setup()
 {
@@ -94,16 +117,24 @@ void setup()
   lcd.clear();
 
   lcd.setCursor(0,0);
-  lcd.print(VERSION); 
+  lcd.print("Arduino OpenTrackR"); 
 
-  Serial.begin(57600);
+  //pinMode(10, OUTPUT);
+  pinMode(13, OUTPUT);
   
-  aprs.begin(9600);
-  
+  Serial.begin(9600);
+  debug.begin(9600);
   ss.begin(9600);
 
-  Serial.print("ArduAPRS Track v0.2"); 
-  Serial.println();
+  debug.flush();
+  debug.println();
+  debug.println();
+  debug.println("==================================");  
+  debug.print("DEBUG:- "); 
+  debug.println(VERSION); 
+  debug.println("==================================");  
+  debug.println();
+
   
   delay(500);
   lcd.clear();
@@ -112,7 +143,7 @@ void setup()
   delay(1000);
   configModem();
   
-  unsigned long Txtimer = millis();
+  unsigned long txTimer = millis();
 
 } // end setup()
 
@@ -122,23 +153,37 @@ void loop()
 {
     float latDeg;
     float lngDeg;
-
+    char c;
+    boolean inputComplete = false;
+    int headingDelta = 0;
+    static const double HOME_LAT = 3.16925 , HOME_LON = 101.64972;
     
-    aprs.listen();                    // Turn on listen() on radio
-    decodeAPRS(); 
-
+    // Send commands from debug serial into hw Serial char by char 
+    debug.listen();
+    if ( debug.available() ) {
+         c = debug.read();
+         Serial.print(c);
+    }
+    
     ss.listen();                    // Turn on listen() on GPS
     while ( ss.available() > 0 ) {
       gps.encode(ss.read());
     }
     
-    
+   // Turn on LED at pin 13 when a GPS lock 
+   if ( gps.location.isValid() ) {
+        digitalWrite(13,HIGH);
+   } else {
+        digitalWrite(13,LOW);     
+   }
+   //debug.println(freeRam());
+ 
    if (gps.time.isUpdated()) {
     
      char tmp[10];
      
-     latDeg = convertDegMinSec(gps.location.lat());
-     lngDeg = convertDegMinSec(gps.location.lng());
+     latDeg = convertDegMin(gps.location.lat());
+     lngDeg = convertDegMin(gps.location.lng());
 
      latOut="";
      lngOut="";
@@ -159,17 +204,24 @@ void loop()
      cmtOut.concat((float) readVcc()/1000);
      cmtOut.concat("V ");
      cmtOut.concat((int) gps.speed.kmph());
-     cmtOut.concat("km/h");
+     cmtOut.concat("km/h ");
+     cmtOut.concat(gps.hdop.value());
+     cmtOut.concat("/");
+     cmtOut.concat(gps.satellites.value());
      
-     //Serial.println(cmtOut);
-     lcd.setCursor(0,3);
-     lcd.print("0");
-     lcd.setCursor(1,3);
-     lcd.print(convertDegMinSec(gps.location.lat()));  
-    
-     lcd.setCursor(8,3);
-     lcd.print(convertDegMinSec(gps.location.lng()));  
+     // ALT in Meter
+     lcd.setCursor(9,3);
+     lcd.print("    ");
+     lcd.setCursor(9,3); 
+     lcd.print((int) gps.altitude.meters());
 
+     // HDOP in 100th
+     lcd.setCursor(14,3);
+     lcd.print("    ");
+     lcd.setCursor(14,3);     
+     lcd.print(gps.hdop.value());
+
+     // Satellites in view
      lcd.setCursor(18,3);   
      lcd.print("  "); 
      lcd.setCursor(18,3);   
@@ -182,74 +234,170 @@ void loop()
     
      lcd.setCursor(17,0);
      lcd.print((int) gps.speed.kmph());
+     
 
-// Check for course change more than 30 degrees
-
-    
 // Change the Tx internal based on the current speed
 // This change will not affect the countdown timer
+// Based on HamHUB Smart Beaconing(tm) algorithm
 
     if ( ((int) gps.speed.kmph()) < 5 && !firstTx ) {
-          Txinterval = 300000;         // Change Tx internal to 5 mins
+          txInterval = 300000;         // Change Tx internal to 5 mins
           firstTx = 0;                 // Turn off firstTx flag
-    } else if ( ((int) gps.speed.kmph()) > 40 ) {
-          Txinterval = 90000;          // Change Tx interval to 90 secs
-    } else if ( ((int) gps.speed.kmph()) > 80 ) {
-          Txinterval = 60000;          // Change Tx interval to 60 secs
+    } else if ( ((int) gps.speed.kmph()) > lowSpeed ) {
+          txInterval = 60000;          // Change Tx interval to 60
+    } else if ( ((int) gps.speed.kmph()) > highSpeed ) {
+          txInterval = 30000;          // Change Tx interval to 30 secs
+    } else {
+          // Interval inbetween low and high speed 
+          txInterval =  ( highSpeed / (int) gps.speed.kmph() ) * 30000;       
     } // endif
     
- }  // End of gps.time.isUpdated()
- 
- 
- 
-// Trigger Tx Tracker when Tx internal is reach ( based on speed or default of 5min ) 
-// GPS location is locked
-//
     
- if ( millis() - Txtimer  >= Txinterval && ( gps.location.isValid() ) ) {
-       // Make sure we are not receiving any packets && coordinates is not the same as previously Tx coordinates
+  // Get headings and heading delta
+  currentHeading = (int) gps.course.deg();
+  headingDelta = (int) ((previousHeading - currentHeading) + 360 ) % 360;
+    
+distanceHome =   TinyGPSPlus::distanceBetween(
+          gps.location.lat(),
+          gps.location.lng(),
+          HOME_LAT, 
+          HOME_LON);         
+distanceLast =   TinyGPSPlus::distanceBetween(
+          gps.location.lat(),
+          gps.location.lng(),
+          lastDecLat,
+          lastDecLng);
+          
+ }  // End of gps.time.isUpdated()
+ ////////////////////////////////////////////////////////////////////////////////////
+ 
+  if ( distanceLast > 500 ) {
+        debug.println();
+        debug.println("Trigger by distance more than 500m"); 
+        TxtoRadio();
+  }
+ 
+// Check for turnings every 5 secs
+// Check for heading change more than 25 degrees
+    if ( millis() - txTimer > 5000 && (gps.satellites.value() > 3) ) {
+      if ( headingDelta < -25 || headingDelta >  25 ) {
+        debug.println();
+        debug.print("Current:");      
+        debug.print(currentHeading);
+        debug.print(" previous:");      
+        debug.print(previousHeading);
+        debug.print(" delta:");      
+        debug.println(headingDelta);
+        
+           debug.println();
+           debug.println("Trigger by Heading Change"); 
+           TxtoRadio();
+           previousHeading = currentHeading;
+       }
+    }
+ 
+
+// Trigger Tx Tracker when Tx internal is reach ( based on speed or default of 5min ) 
+// GPS location is locked    
+ if ( millis() - txTimer  >= txInterval && ( gps.location.isValid() ) ) {
        if ( !(lastLat.equals(latOut) && lastLng.equals(lngOut)) ) {
-             if (aprs.available()==0 ) {
+             if (Serial.available()==0 ) {
                    // Make sure not receiving any packets
-                   TxtoRadio();
-                   // Copy lat & lng into lastLat,lastLng  
-                   lastLat="";
-                   lastLng="";
-                   lastLat = latOut;
-                   lastLng = lngOut;   
+                   debug.println();
+                   debug.println("Trigger by Speed or timeout");                              
+                   TxtoRadio(); 
               } else {
                    // Delay TxInternal by 3 secs
-                   Txinterval =+ 3000;
+                   txInterval =+ 3000;
               }
+       // Added 100 ms delays for the Tx timeout checking       
+       //delay(100);       
        } // End if check for last coordinates
+       
   } // End Txinternal timeout
 
 } // end loop()
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void serialEvent() {
+    decodeAPRS(); 
+}
 
 void TxtoRadio() {
   
-     unsigned long lastTx = millis() - Txtimer;
-     Serial.print("Writing to radio since ");  
-     Serial.print(lastTx); 
-     Serial.println(" ms");    
-     // Turn on the buzzer
-     digitalWrite(10,HIGH);      
+     unsigned long lastTx = millis() - txTimer;
+     txCounter++;
+     
+     lastDecLat = gps.location.lat();
+     lastDecLng = gps.location.lng();
 
-     aprs.println(latOut);
-     delay(200);
-     aprs.println(lngOut);
-     delay(200);
-     aprs.println(cmtOut);
+     debug.print("GPS: ");
+     debug.print(lastDecLat,5);
+     debug.print(" ");
+     debug.print(lastDecLng,5);
+     debug.println();
+
+     debug.print("Sat:");           
+     debug.print(gps.satellites.value());
+     debug.print(" HDOP:");
+     debug.print(gps.hdop.value());
+     debug.print(" km/h:");           
+     debug.print((int) gps.speed.kmph());
+     debug.print(" Head:");
+     debug.print(currentHeading);          
+     debug.print(" PrevHead:");
+     debug.print(previousHeading); 
+     debug.print(" Alt:");
+     debug.print(gps.altitude.meters());
+     debug.print("m");
+     debug.println();
+           
+     debug.print("TX STR: ");
+     debug.print(latOut);
+     debug.print(" ");           
+     debug.print(lngOut);
+     debug.println();
+     debug.print(cmtOut);  
+     debug.println(); 
+
+     debug.print("Distance(m): Home:");
+     debug.print(distanceHome,2);
+     debug.print(" Last:");  
+     debug.print(distanceLast,2);
+     debug.println(); 
+     
+     debug.print("Writing to radio since ");  
+     debug.print(lastTx); 
+     debug.println(" ms");    
+     // Turn on the buzzer
+     digitalWrite(10,HIGH);  
+     
+     lcd.setCursor(0,3);     
+     lcd.print("    ");
+     lcd.setCursor(0,3);          
+     lcd.print(lastTx/1000);
+     
+     lcd.setCursor(5,3);
+     lcd.print("   ");
+     lcd.setCursor(5,3);
+     lcd.print(txCounter);
+
+     Serial.println(latOut);
+     delay(300);
+     Serial.println(lngOut);
+     delay(300);
+     Serial.println(cmtOut);
      delay(300);
                  
      digitalWrite(10,LOW);     
-     // Reset the Txtimer & Tx internal     
-     Txinterval = 120000;
-     Txtimer = millis(); 
-     aprs.flush();
+     // Reset the txTimer & Tx internal   
+     lastLat="";
+     lastLng="";
+     lastLat = latOut;
+     lastLng = lngOut;    
+     txInterval = 60000;
+     txTimer = millis(); 
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -264,26 +412,25 @@ void configModem() {
   lcd.setCursor(0,0);
   lcd.print("Configuring modem");
   
-  aprs.println("V1");      // Enable silent mode
-  delay(500);
-
-  aprs.println("cNOCALL");  // Set SRC Callsign
-  delay(500);
+  lcd.setCursor(0,0);
+  lcd.print("Configuring callsig");
+  Serial.println("c9W2SVT");  // Set SRC Callsign
+  delay(200);
   
-  aprs.println("sc8");      // Set SRC SSID
-  delay(500);
-
-  aprs.println("pd0");      // Disable printing DST 
-  delay(500);
-
-  aprs.println("ls?");      // Desktop symbol ?
-  delay(500);
+  lcd.setCursor(0,0);
+  lcd.print("Configuring ssid");
+  Serial.println("sc8");      // Set SRC SSID
+  delay(200);
+  Serial.println("pd0");      // Disable printing DST 
+  delay(200);
+  Serial.println("lsn");      // Set symbol ?
+  delay(200);
+  Serial.println("lts");      // Standard symbol 
+  delay(200);
+  Serial.println("H");        // Print out the Settings
+  //delay(500);
   
-  aprs.println("lts");      // Standard symbol 
-  delay(500); 
-
-  
-  //aprs.println("S");        // Save config
+  //Serial.println("S");        // Save config
   
   lcd.setCursor(0,0);
   lcd.print("Done...........   ");
@@ -299,11 +446,14 @@ void decodeAPRS() {
       char endChar = '\n';
       char endChar2 = '\r';
       boolean storeString = true;
+      char callsign[12];
+      char path[60];
+      char data[100];
 
-      while ( aprs.available() > 0 ) {
-         c = aprs.read();
+      while ( Serial.available() > 0 ) {
+         c = Serial.read();
          // For debugging only 
-         Serial.print(c);
+         debug.print(c);
          
          // If MAXBUFFER is reach, NULL terminate the string
          if ( bufferIndex > maxBuffer ) {
@@ -328,19 +478,21 @@ void decodeAPRS() {
       }
       
       if ( inBuffer != "" && !storeString ) {
-        Serial.println();
-        Serial.print("inBuffer (");
-        Serial.print(inBuffer.length());
-        Serial.print("):");
-        Serial.println(inBuffer);
+        debug.println();
+        debug.print("RF(");
+        debug.print(inBuffer.length());
+        debug.print("):");
+        debug.println(inBuffer);
         
         // Check for first 3 char is SRC
         if ( inBuffer.substring(0,3) == "SRC" ) {
       
         int firstBracket = inBuffer.indexOf('[');  // Anything in between [ and ] is the callsign & ssid
         int secondBracket = inBuffer.indexOf(']');
-  
-        int secondColon = inBuffer.indexOf(':',secondBracket+1);
+
+        //int secondColon = inBuffer.indexOf(':',secondBracket+1);  
+        int secondColon = secondBracket+6;
+        // Do not use lastindexOf as the messaging uses : too 
         int thirdColon = inBuffer.indexOf(':',secondColon+1);
         
         // Get the callsign
@@ -355,30 +507,34 @@ void decodeAPRS() {
         String decoded4 = inBuffer.substring(thirdColon+2,inBuffer.length());
         decoded4.toCharArray(data,decoded4.length()+1);
 
-        Serial.print("Callsign (");
-        Serial.print(strlen(callsign));
-        Serial.print("):");
-        Serial.println(callsign);    
+        debug.print("Callsign (");
+        debug.print(strlen(callsign));
+        debug.print("):");
+        debug.println(callsign);    
              
-        Serial.print("Path (");
-        Serial.print(strlen(path));
-        Serial.print("):");
-        Serial.println(path);    
+        debug.print("Path (");
+        debug.print(strlen(path));
+        debug.print("):");
+        debug.println(path);    
 
-        Serial.print("Data (");
-        Serial.print(strlen(data));
-        Serial.print("):");
-        Serial.println(data);    
+        debug.print("Data (");
+        debug.print(strlen(data));
+        debug.print("):");
+        debug.println(data);    
         
         lcd.clear();
         lcd.setCursor(0,0);
         lcd.print(callsign);
         
         lcd.setCursor(0,1);
+        lcd.print("                    ");        
+        lcd.setCursor(0,1);
         for ( int i=0;i<20;i++ ) { lcd.print(data[i]); }
 
         // Print on Line 2
         lcd.setCursor(0,2);
+        lcd.print("                    ");        
+        lcd.setCursor(0,2);        
         if ( strlen(data) < 40 ) {
             for ( int i=20;i<strlen(data);i++ ) { lcd.print(data[i]); }
         } else {
@@ -403,21 +559,21 @@ void decodeAPRS() {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-float convertDegMinSec(float decDeg) {
+float convertDegMin(float decDeg) {
   
-  float DegMinSec;
+  float DegMin;
   
   int intDeg = decDeg;
   decDeg -= intDeg;
   decDeg *= 60;
-  int minDeg = decDeg;
-  decDeg -= minDeg;
-  decDeg *= 60;
-  int secDeg = decDeg;
+  //int minDeg = decDeg;
+  //decDeg -= minDeg;
+  //decDeg *= 60;
+  //int secDeg = decDeg;
   
-  DegMinSec = ( intDeg*100 ) + minDeg + ( (float)secDeg / 100 );
+  DegMin = ( intDeg*100 ) + decDeg;
  
- return DegMinSec; 
+ return DegMin; 
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -434,3 +590,10 @@ long readVcc() {
   result = 1126400L / result; // Back-calculate AVcc in mV
   return result;
 }
+
+int freeRam () {
+  extern int __heap_start, *__brkval; 
+  int v; 
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+}
+
