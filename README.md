@@ -15,15 +15,15 @@ Arduino TrackR interface for MicroAPRS firmware
  via Serial port
  
  Connection to Arduino :-
- Pin 0/1 (rx,tx) connects to Arduino with MicroAPRS firmware
- Pin 2,3 ( rx,tx ) connects to GPS module 
- Pin 8,9 ( rx,tx ) connects to a FTDI Serial USB module with OTG calbe to my Android phone with FTDI 
+ - Pin 0/1 (rx,tx) connects to Arduino with MicroAPRS firmware
+ - Pin 2,3 ( rx,tx ) connects to GPS module 
+ - Pin 8,9 ( rx,tx ) connects to a FTDI Serial USB module with OTG calbe to my Android phone with FTDI 
  Terminal software for logging and debugging during the test runs. 
  
  Optional accessories: 20x4 LCD, buzzer & FTDI Serial USB module
- Pin 4,5,6,7,12,11 connects to 20x4 LCD 
- Pin 10 - Buzzer during Radio Tx
- Pin 8,9 - Connect to FTDI Serial USB module for debugging
+ - Pin 4,5,6,7,12,11 connects to 20x4 LCD 
+ - Pin 10 - Buzzer during Radio Tx
+ - Pin 8,9 - Connect to FTDI Serial USB module for debugging
  
  Instructions :-
  
