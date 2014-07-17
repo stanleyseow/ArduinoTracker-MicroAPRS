@@ -91,22 +91,19 @@ unsigned long last = 0UL;
 // APRS buffers
 String inBuffer = "";
 int maxBuffer = 200;
-char charBuffer[199];
+//char charBuffer[199];
 byte bufferIndex=0;
 
-// Variable for debugging and input from SoftSerial
 byte inputIndex = 0;
-char inputString[80];
 
-bool firstTx = 1;
 unsigned long txTimer = 0;
 long lastTx = 0;
+long txInterval = 60000L;  // Initial 60 secs internal
 int txCounter=0;
 
 // Speed in km/h
 byte highSpeed = 80;       // High speed  
 byte lowSpeed = 40;        // Low speed
-long txInterval = 60000L;  // Initial 60 secs internal
 
 int lastCourse = 0;
 byte lastSpeed = 0;
@@ -162,9 +159,9 @@ void loop()
     int headingDelta = 0;
     static const double HOME_LAT = 3.16925 , HOME_LON = 101.64972;
     
-    if ( Serial.available() > 0 ) {
-    decodeAPRS(); 
-    }
+    //if ( Serial.available() > 0 ) {
+    //decodeAPRS(); 
+    //}
     
     // Send commands from debug serial into hw Serial char by char 
     debug.listen();
@@ -184,11 +181,11 @@ void loop()
    } else {
         digitalWrite(13,LOW);     
    }
-   //debug.println(freeRam());
  
+ 
+///////////////// Triggered by location updates /////////////////////// 
    if ( gps.location.isUpdated()) { 
 
-     
      homeDistance =   TinyGPSPlus::distanceBetween(
           gps.location.lat(),
           gps.location.lng(),
@@ -199,38 +196,17 @@ void loop()
           gps.location.lng(),
           lastTxLat,
           lastTxLng);
-          
-// Change the Tx internal based on the current speed
-// This change will not affect the countdown timer
-// Based on HamHUB Smart Beaconing(tm) algorithm
-
-      if ( ((int) gps.speed.kmph()) < 5 && !firstTx ) {
-            txInterval = 300000;         // Change Tx internal to 5 mins
-            firstTx = false;                 // Turn off firstTx flag
-      } else if ( ((int) gps.speed.kmph()) < lowSpeed ) {
-            txInterval = 60000;          // Change Tx interval to 60
-      } else if ( ((int) gps.speed.kmph()) > highSpeed ) {
-            txInterval = 30000;          // Change Tx interval to 30 secs
-      } else {
-            // Interval inbetween low and high speed 
-            txInterval =  (int) ( highSpeed / (int) gps.speed.kmph() ) * 30000;       
-      } // endif
-          
-          
      
     } // endof gps.location.isUpdated()
 
+///////////////// Triggered by time updates /////////////////////// 
 // Update LCD every second
+
    if (gps.time.isUpdated()) {     
-     // Speed in km/h
-     lcd.setCursor(9,3);
-     lcd.print("    ");
-     lcd.setCursor(9,3); 
-     lcd.print((int) gps.speed.kmph());
 
      // HDOP in 100th
      lcd.setCursor(14,3);
-     lcd.print("   /");
+     lcd.print("    ");
      lcd.setCursor(14,3);     
      lcd.print(gps.hdop.value());
 
@@ -250,13 +226,32 @@ void loop()
      lcd.setCursor(16,0);
      lcd.print("   ");  
      lcd.setCursor(16,0);
-     lcd.print((int)homeDistance);    
+     lcd.print((float)homeDistance/1000,1);    // Format is 12.34 km
+     
+     
+// Change the Tx internal based on the current speed
+// This change will not affect the countdown timer
+// Based on HamHUB Smart Beaconing(tm) algorithm
+
+      if ( ((int) gps.speed.kmph()) < 5 ) {
+            txInterval = 300000;         // Change Tx internal to 5 mins
+      } else if ( ((int) gps.speed.kmph()) < lowSpeed ) {
+        txInterval = 60000;          // Change Tx interval to 60
+      } else if ( ((int) gps.speed.kmph()) > highSpeed ) {
+        txInterval = 30000;          // Change Tx interval to 30 secs
+      } else {
+        // Interval inbetween low and high speed 
+            txInterval =  (int) ( highSpeed / (int) gps.speed.kmph() ) * 30000;       
+      } // endif
+      
+     
 
  }  // endof gps.time.isUpdated()
      
-    if ( gps.course.isUpdated() ) {
-////////////////////////////////////////////////////
+///////////////// Triggered by course updates /////////////////////// 
 // Formula need to be confirmed
+     
+    if ( gps.course.isUpdated() ) {
       
       // Get headings and heading delta
       currentHeading = (int) gps.course.deg();
@@ -269,18 +264,23 @@ void loop()
  // Check for when to Tx packet
  ////////////////////////////////////////////////////////////////////////////////////
  
+  lastTx = 0;
   lastTx = millis() - txTimer;
 
  // If distance is more than 500m except for first Tx and lastTx more than 10sec
-  if ( lastTxdistance > 500 && (gps.satellites.value() > 3) && !firstTx && (lastTx > 10000)  ) {
-        firstTx = false;      // During the initial reading, the distance might be hugh from initial lat/long
+  if ( lastTxdistance > 500 && (gps.satellites.value() > 3) && (lastTx > 10000)  ) {
         debug.println();
         debug.println("*** Trigger by distance > 500m"); 
+        debug.print("lastTxdistance: ");
+        debug.println(lastTxdistance);
+        lcd.setCursor(0,3);
+         lcd.print("D");
         TxtoRadio();
+        lastTxdistance = 0;   // Ensure this value is zero before the next Tx
   }
  
-// Check for turnings every 5 secs
-// Check for heading change more than 25 degrees
+// Check for heading change more than 25 degrees every 5 secs
+
     if ( lastTx > 5000 && (gps.satellites.value() > 3) ) {
       if ( headingDelta < -25 || headingDelta >  25 ) {
           debug.println();        
@@ -292,35 +292,54 @@ void loop()
           debug.println(headingDelta);
         
           debug.println("*** Trigger by Heading Change"); 
-          firstTx = false;
+          lcd.setCursor(0,3);
+          lcd.print("H");        
+          txTimer = millis(); 
           TxtoRadio();
           previousHeading = currentHeading;
        }
     }
  
+ 
 
 // Trigger Tx Tracker when Tx interval is reach 
 // Space out the distance to at least 20m from last Tx distance
  if ( ( lastTx >= txInterval ) && ( gps.satellites.value()>3) ) {
-       if ( lastTxdistance > 20 ) {
+ //      if ( lastTxdistance > 20 ) {
                debug.println();
                debug.print("lastTx:");
                debug.print(lastTx);
                debug.print(" txInterval:");
-               debug.println(txInterval);               
-               debug.println("*** Trigger by Speed or timeout");                              
+               debug.print(txInterval);     
+               debug.print(" lastTxdistance:");
+               debug.println(lastTxdistance);
+               
+               debug.println("*** Trigger by txInterval and lastTxdistance > 20");   
+               lcd.setCursor(0,3);
+               lcd.print("T");        
+               txTimer = millis(); 
                TxtoRadio(); 
-        } 
+    //    } 
             
   } // End Txinternal timeout
+  
+  if ( analogRead(0) > 700 && (lastTx > 10000) ) {
+               debug.println();             
+               debug.println(analogRead(0));
+               debug.println("*** Trigger by button, 10sec delay/Tx");  
+               lcd.setCursor(0,3);
+               lcd.print("B");     
+               txTimer = millis(); 
+               TxtoRadio(); 
+  }    
 
 } // end loop()
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//void serialEvent() {
-//    decodeAPRS(); 
-//}
+void serialEvent() {
+    decodeAPRS(); 
+}
 
 void TxtoRadio() {
   
@@ -353,8 +372,6 @@ void TxtoRadio() {
      debug.print(gps.altitude.meters());
      debug.print("m");
      debug.println();
-           
-
 
      debug.print("Distance(m): Home:");
      debug.print(homeDistance,2);
@@ -368,14 +385,14 @@ void TxtoRadio() {
      // Turn on the buzzer
      digitalWrite(10,HIGH);  
      
-     lcd.setCursor(0,3);     
-     lcd.print("    ");
-     lcd.setCursor(0,3);          
+     lcd.setCursor(2,3);     
+     lcd.print("L:   ");
+     lcd.setCursor(4,3);          
      lcd.print(lastTx/1000);
      
-     lcd.setCursor(5,3);
-     lcd.print("   ");
-     lcd.setCursor(5,3);
+     lcd.setCursor(8,3);
+     lcd.print("C:   ");
+     lcd.setCursor(10,3);
      lcd.print(txCounter);
      
      char tmp[10];
@@ -395,8 +412,7 @@ void TxtoRadio() {
      lngOut.concat(tmp);
      lngOut.concat("E");
      
-     cmtOut = "";
-     cmtOut = "@ ";
+     cmtOut.concat("@ ");
      cmtOut.concat(VERSION);
      cmtOut.concat((float) readVcc()/1000);
      cmtOut.concat("V ");
@@ -415,17 +431,21 @@ void TxtoRadio() {
      debug.println(); 
 
      Serial.println(latOut);
-     delay(200);
+     delay(300);
      Serial.println(lngOut);
-     delay(200);
+     delay(300);
      Serial.println(cmtOut);
-     delay(200);
+     delay(300);
                  
      digitalWrite(10,LOW);     
      // Reset the txTimer & Tx internal   
     
      txInterval = 60000;
-     txTimer = millis(); 
+     // txTimer = millis(); 
+     lastTx = 0;
+     debug.print("FreeRAM:");
+     debug.println(freeRam());
+     debug.println("==========================================");
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -444,20 +464,17 @@ void configModem() {
   lcd.print("Configuring callsig");
   Serial.println("c9W2SVT");  // Set SRC Callsign
   delay(200);
-  
   lcd.setCursor(0,0);
   lcd.print("Configuring ssid");
   Serial.println("sc8");      // Set SRC SSID
   delay(200);
   Serial.println("pd0");      // Disable printing DST 
   delay(200);
-  Serial.println("lsn");      // Set symbol ?
+  Serial.println("lsn");      // Set symbol n / Bluedot
   delay(200);
   Serial.println("lts");      // Standard symbol 
   delay(200);
-  Serial.println("H");        // Print out the Settings
-  //delay(500);
-  
+  //Serial.println("H");        // Print out the Settings
   //Serial.println("S");        // Save config
   
   lcd.setCursor(0,0);
@@ -477,11 +494,12 @@ void decodeAPRS() {
       char callsign[12];
       char path[60];
       char data[100];
+      char charBuffer[199];
 
-      debug.println();
-      debug.print("Entering decodeAPRS (");
-      debug.print(millis());
-      debug.println(")");
+      //debug.println();
+      //debug.print("Entering decodeAPRS (");
+      //debug.print(millis());
+      //debug.println(")");
       while ( Serial.available() > 0 ) {
          c = Serial.read();
          // For debugging only 
@@ -623,7 +641,7 @@ long readVcc() {
   return result;
 }
 
-int freeRam () {
+int freeRam() {
   extern int __heap_start, *__brkval; 
   int v; 
   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
