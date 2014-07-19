@@ -204,30 +204,33 @@ void loop()
 
    if (gps.time.isUpdated()) {     
 
-     // HDOP in 100th
-     lcd.setCursor(14,3);
-     lcd.print("    ");
-     lcd.setCursor(14,3);     
-     lcd.print(gps.hdop.value());
+     lcd.setCursor(1,0);
+     lcd.print("   ");
+     lcd.setCursor(1,0);
+     lcd.print(txCounter);
 
-     // Satellites in view
-     lcd.setCursor(18,3);   
-     lcd.print("  "); 
-     lcd.setCursor(18,3);   
-     lcd.print(gps.satellites.value());
-
+     lcd.setCursor(3,0);
+     lcd.print("       ");
+     lcd.setCursor(3,0);
+     lcd.print(lastTx);
+     
      // Print to LCD the last TX distance, 3 digits max, 999m
-     lcd.setCursor(12,0);
+     lcd.setCursor(10,0);
      lcd.print("    ");  
-     lcd.setCursor(12,0);
+     lcd.setCursor(10,0);
      lcd.print((int)lastTxdistance);    
 
      // Print to LCD the distance to home, 4 digits max, 9999m
-     lcd.setCursor(16,0);
-     lcd.print("   ");  
-     lcd.setCursor(16,0);
+     lcd.setCursor(14,0);
+     lcd.print("    ");  
+     lcd.setCursor(14,0);
      lcd.print((float)homeDistance/1000,1);    // Format is 12.34 km
      
+     // Satellites in view
+     lcd.setCursor(18,0);   
+     lcd.print("  "); 
+     lcd.setCursor(18,0);   
+     lcd.print(gps.satellites.value());
      
 // Change the Tx internal based on the current speed
 // This change will not affect the countdown timer
@@ -267,71 +270,75 @@ void loop()
   lastTx = 0;
   lastTx = millis() - txTimer;
 
- // If distance is more than 500m except for first Tx and lastTx more than 10sec
-  if ( lastTxdistance > 500 && (gps.satellites.value() > 3) && (lastTx > 10000)  ) {
-        debug.println();
-        debug.println("*** Trigger by distance > 500m"); 
-        debug.print("lastTxdistance: ");
-        debug.println(lastTxdistance);
-        lcd.setCursor(0,3);
-         lcd.print("D");
-        TxtoRadio();
-        lastTxdistance = 0;   // Ensure this value is zero before the next Tx
-  }
- 
-// Check for heading change more than 25 degrees every 5 secs
-
-    if ( lastTx > 5000 && (gps.satellites.value() > 3) ) {
-      if ( headingDelta < -25 || headingDelta >  25 ) {
-          debug.println();        
-          debug.print("Heading, current:");      
-          debug.print(currentHeading);
-          debug.print(" previous:");      
-          debug.print(previousHeading);
-          debug.print(" delta:");      
-          debug.println(headingDelta);
+    if ( (lastTx > 5000)  && (gps.satellites.value() > 3) ) {
+        // Check for heading more than 25 degrees
+        if ( headingDelta < -25 || headingDelta >  25 ) {
+            debug.println();        
+            debug.print("Heading, current:");      
+            debug.print(currentHeading);
+            debug.print(" previous:");      
+            debug.print(previousHeading);
+            debug.print(" delta:");      
+            debug.println(headingDelta);
         
-          debug.println("*** Trigger by Heading Change"); 
-          lcd.setCursor(0,3);
-          lcd.print("H");        
-          txTimer = millis(); 
-          TxtoRadio();
-          previousHeading = currentHeading;
-       }
+            debug.println("*** Trigger by Heading Change"); 
+            lcd.setCursor(0,0);
+            lcd.print("H");        
+            txTimer = millis(); 
+            TxtoRadio();
+            previousHeading = currentHeading;
+            lastTx = millis() - txTimer;
+        }
     }
- 
- 
+    
+    if ( (lastTx > 10000) && (gps.satellites.value() > 3) ) {
+         // check of the last Tx distance is more than 500m
+         if ( lastTxdistance > 500 ) {  
+            debug.println();
+            debug.println("*** Trigger by distance > 500m"); 
+            debug.print("lastTxdistance: ");
+            debug.println(lastTxdistance);
+            lcd.setCursor(0,0);
+            lcd.print("D");
+            TxtoRadio();
+            lastTxdistance = 0;   // Ensure this value is zero before the next Tx
+            lastTx = millis() - txTimer;
 
-// Trigger Tx Tracker when Tx interval is reach 
-// Space out the distance to at least 20m from last Tx distance
- if ( ( lastTx >= txInterval ) && ( gps.satellites.value()>3) ) {
- //      if ( lastTxdistance > 20 ) {
-               debug.println();
-               debug.print("lastTx:");
-               debug.print(lastTx);
-               debug.print(" txInterval:");
-               debug.print(txInterval);     
-               debug.print(" lastTxdistance:");
-               debug.println(lastTxdistance);
+         } else if ( analogRead(0) > 700 ) {
+           // Check if the analog0 is plugged into 5V
+                     debug.println();             
+                     debug.println(analogRead(0));
+                     debug.println("*** Trigger by button, 10sec delay/Tx");  
+                     lcd.setCursor(0,0);
+                     lcd.print("B");     
+                     txTimer = millis(); 
+                     TxtoRadio(); 
+                     lastTx = millis() - txTimer;
+
+           }
+    }
+    
+    if ( (lastTx >= txInterval) && ( gps.satellites.value() > 3) ) {
+        // Trigger Tx Tracker when Tx interval is reach 
+        // Will not Tx if stationary bcos speed < 5 and lastTxDistance < 20
+               if ( lastTxdistance > 20 ) {
+                   debug.println();
+                   debug.print("lastTx:");
+                   debug.print(lastTx);
+                   debug.print(" txInterval:");
+                   debug.print(txInterval);     
+                   debug.print(" lastTxdistance:");
+                   debug.println(lastTxdistance);
                
-               debug.println("*** Trigger by txInterval and lastTxdistance > 20");   
-               lcd.setCursor(0,3);
-               lcd.print("T");        
-               txTimer = millis(); 
-               TxtoRadio(); 
-    //    } 
-            
-  } // End Txinternal timeout
-  
-  if ( analogRead(0) > 700 && (lastTx > 10000) ) {
-               debug.println();             
-               debug.println(analogRead(0));
-               debug.println("*** Trigger by button, 10sec delay/Tx");  
-               lcd.setCursor(0,3);
-               lcd.print("B");     
-               txTimer = millis(); 
-               TxtoRadio(); 
-  }    
+                   debug.println("*** Trigger by txInterval and lastTxdistance > 20");   
+                   lcd.setCursor(0,0);
+                   lcd.print("T");        
+                   txTimer = millis(); 
+                   TxtoRadio(); 
+                   lastTx = millis() - txTimer;
+               }      
+  } // endif of check for lastTx
+   
 
 } // end loop()
 
@@ -384,17 +391,7 @@ void TxtoRadio() {
      debug.println(" ms");    
      // Turn on the buzzer
      digitalWrite(10,HIGH);  
-     
-     lcd.setCursor(2,3);     
-     lcd.print("L:   ");
-     lcd.setCursor(4,3);          
-     lcd.print(lastTx/1000);
-     
-     lcd.setCursor(8,3);
-     lcd.print("C:   ");
-     lcd.setCursor(10,3);
-     lcd.print(txCounter);
-     
+          
      char tmp[10];
      float latDegMin, lngDegMin = 0.0;
      String latOut, lngOut, cmtOut = "";
@@ -470,9 +467,13 @@ void configModem() {
   delay(200);
   Serial.println("pd0");      // Disable printing DST 
   delay(200);
+  Serial.println("pp0");      // Disable printing PATH
+  delay(200);
   Serial.println("lsn");      // Set symbol n / Bluedot
   delay(200);
   Serial.println("lts");      // Standard symbol 
+  delay(200);
+  Serial.println("V1");      // Silent Mode ON 
   delay(200);
   //Serial.println("H");        // Print out the Settings
   //Serial.println("S");        // Save config
@@ -486,6 +487,50 @@ void configModem() {
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void decodeAPRS() {
+      // Dump whatever on the Serial to LCD line 1
+      char c;
+      String decoded="";
+
+      //debug.println();
+      //debug.print("Entering decodeAPRS (");
+      //debug.print(millis());
+      //debug.println(")");
+      while ( Serial.available() > 0 ) {
+         c = Serial.read();
+         // For debugging only 
+         debug.print(c);
+         decoded.concat(c); 
+      }   
+  
+      int callIndex = decoded.indexOf("[");
+      int callIndex2 = decoded.indexOf("]");
+      String callsign = decoded.substring(callIndex+1,callIndex2);
+      
+      int dataIndex = decoded.indexOf("DATA:");
+      String data = decoded.substring(dataIndex+6,decoded.length());
+
+      String line2 = data.substring(0,20);
+      String line3 = data.substring(21,40);
+      
+      //lcd.clear();
+      lcd.setCursor(0,1);
+      lcd.print("                    ");
+      lcd.setCursor(0,1);
+      lcd.print(callsign);
+      lcd.setCursor(0,2);
+      lcd.print("                    ");
+      lcd.setCursor(0,2);      
+      lcd.print(line2);
+      lcd.setCursor(0,3);
+      lcd.print("                    ");
+      lcd.setCursor(0,3);
+      lcd.print(line3);
+      //delay(100);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+/* This is the old codes
 void decodeAPRS() {
       char c;
       char endChar = '\n';
@@ -605,10 +650,7 @@ void decodeAPRS() {
        
       } // end storeString
 }
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
+*/
 float convertDegMin(float decDeg) {
   
   float DegMin;
