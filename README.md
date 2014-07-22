@@ -88,6 +88,7 @@ Default configuration loaded!
 Modem ready
 ---------------
 
+
  You can console into this modem, change or save settings to the EEPROM or even 
  send messages.
 
