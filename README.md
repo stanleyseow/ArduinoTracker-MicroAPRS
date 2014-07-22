@@ -78,17 +78,9 @@ avrdude done.  Thank you.
 
 ========= Sample Output ============= 
  
-Once the hex upload is successful, you will see the below prompt if you connect to the modem using 
-9600 baud rate.
+ Once the hex upload is successful, you will see the prompt "MicroAPRS v0.2a" if you 
+ connect to the modem using 9600 baud rate.
  
-------------------
-MicroAPRS v0.2a
-unsigned.io/microaprs
-Default configuration loaded!
-Modem ready
----------------
-
-
  You can console into this modem, change or save settings to the EEPROM or even 
  send messages.
 
