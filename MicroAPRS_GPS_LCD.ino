@@ -41,18 +41,17 @@
  - Initial released
  
  06 July 2014 :-
- - added check for speed and idle speed, modify the Txinternal
+ - added checks for speed and idle speed, modify the Txinternal
  - remove all debug Monitor output
- - added check for Rx bytes before sending Tx bytes, delay by 3 secs if have available bytes
  
  12 July 2014 :-
  - Added SmartBeaconing algorithm, Tx when turn is more than 25 deg
- - Reduce the Tx interval lower
+ - Reduce the Tx interval
  
  14 July 2014 :-
  - Fixed coordinates conversion from decimal to Deg Min formula
- - Formula to calculate distance from last Tx point so that it will Tx once the max distance 
- is reached, 500m
+ - Formula to calculate distance from last Tx point so that it will Tx once the max direct distance 
+  of 500m is reached
  
  18 July 2014 :-
  - Fixed lastTx checking routine and ensure lastTx is 5 or more secs
@@ -61,46 +60,50 @@
  
  1 Aug 2014 :-
  - Ported codes to Arduino Mini Pro 3.3V
- - Due to checksum errors on SoftwareSerial, swapped GPS ports to AltSoftwareSerial
+ - Due to checksum errors and Mini Pro 3.3V 8Mhz on SoftwareSerial, I swapped GPS ports to AltSoftwareSerial
  
  3 Aug 2014 :-
+ - Added #define codes to turn on/off LCD, DEBUG and TFT
  - Added TFT codes
- - Added the F() macros
+ - Added the F() macros to reduce memory usages on static texts
  
  TODO :-
- - 
+ - implement compression / decompression codes for smaller Tx packets
  
  Bugs :-
  
- - Packet are sometimes not decoded properly 
+ - Packet are sometimes not decoded properly due to input power supply
+ - when using battery, the decode was fine but when using battery eliminator, too much noise
+   from the power supply goes into the Modem. This is observed using an oscilloscope on the audio
+   input before A0
+ - Packet Decode is intermitten
+ - With TFT codes, the AltSoftSerial could not get the speed and course on time with lots of checksum errors
+ - 
  
 */
 
-
+// Needed this to prevent compile error for #defines
 #if 1
 __asm volatile ("nop");
 #endif
 
-// Turn on 20x4 LCD
+// Turn on/off 20x4 LCD
 #undef LCD20x4
-// Turn on debug
+// Turn on/off debug
 #define DEBUG
-// Turn on 2.2" TFT
-#define TFT22
+// Turn on/off 2.2" TFT
+#undef TFT22
 
 #ifdef TFT22
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9340.h>
-
 #define _sclk 13
 #define _miso 12
 #define _mosi 11
 #define _cs 7
 #define _dc 6
 #define _rst 5
-
-// HW SPI
 Adafruit_ILI9340 tft = Adafruit_ILI9340(_cs, _dc, _rst);
 #endif
 
@@ -245,15 +248,15 @@ void loop()
 // Update LCD every second
 
    if ( gps.time.isUpdated() ) {   
-   
-/*     
+    
+   // Turn on LED 13 when Satellites more than 3  
+   // Disable when using TFT / SPI
    if ( gps.satellites.value() > 3 ) {
      digitalWrite(13,HIGH);  
    } else {
      digitalWrite(13,LOW);     
    }
-*/  
-   
+
 #ifdef TFT22
       //tft.fillScreen(ILI9340_BLACK);
       tft.setCursor(0,0);
@@ -410,7 +413,8 @@ void loop()
             debug.print(previousHeading);
             debug.print(F(" delta:"));      
             debug.println(headingDelta);        
-            debug.println(F("*** Trigger by Heading Change")); 
+            debug.print(F("*** Heading Change "));
+            debug.println(txCounter); 
 #endif            
 #ifdef LCD20x4            
             lcd.setCursor(0,0);
@@ -429,9 +433,10 @@ void loop()
          if ( lastTxdistance > 500 ) {  
 #ifdef DEBUG                     
             debug.println();
-            debug.println(F("*** Trigger by distance > 500m")); 
-            debug.print(F("lastTxdistance: "));
-            debug.println(lastTxdistance);
+            debug.print(F("*** Distance > 500m ")); 
+            debug.println(txCounter);  
+            debug.print(F("lastTxdistance:"));
+            debug.print(lastTxdistance);
 #endif          
 #ifdef LCD20x4                        
             lcd.setCursor(0,0);
@@ -457,7 +462,9 @@ void loop()
                    debug.print(txInterval);     
                    debug.print(F(" lastTxdistance:"));
                    debug.println(lastTxdistance);               
-                   debug.println(F("*** Trigger by txInterval and lastTxdistance > 20"));  
+                   debug.print(F("*** txInterval "));  
+                   debug.println(txCounter);  
+
 #endif                   
 #ifdef LCD20x4            
                    lcd.setCursor(0,0);
@@ -476,7 +483,9 @@ void loop()
 #ifdef DEBUG                
                 debug.println();             
                 debug.println(analogRead(0));
-                debug.println(F("*** Trigger by button, 10sec delay/Tx"));  
+                debug.print(F("*** Button ")); 
+                debug.println(txCounter);  
+ 
 #endif                
 #ifdef LCD20x4                            
                 lcd.setCursor(0,0);
@@ -688,6 +697,7 @@ void decodeAPRS() {
       // Dump whatever on the Serial to LCD line 1
       char c;
       String decoded="";
+      int callIndex,callIndex2, dataIndex = 0;
 
       //debug.println();
       //debug.print("Entering decodeAPRS (");
@@ -700,16 +710,20 @@ void decodeAPRS() {
 //#endif         
          decoded.concat(c); 
       }   
-  
-      int callIndex = decoded.indexOf("[");
-      int callIndex2 = decoded.indexOf("]");
+
+#ifdef DEBUG   
+      debug.print("Decoded Packets:");
+      debug.println(decoded);
+#endif   
+      callIndex = decoded.indexOf("[");
+      callIndex2 = decoded.indexOf("]");
       String callsign = decoded.substring(callIndex+1,callIndex2);
       
-      int dataIndex = decoded.indexOf("DATA:");
+      dataIndex = decoded.indexOf("DATA:");
       String data = decoded.substring(dataIndex+6,decoded.length());
 
-      String line2 = data.substring(0,20);
-      String line3 = data.substring(21,40);
+      String line1 = data.substring(0,20);
+      String line2 = data.substring(21,40);
       
 #ifdef LCD20x4                                  
       lcd.setCursor(0,1);
@@ -719,19 +733,18 @@ void decodeAPRS() {
       lcd.setCursor(0,2);
       lcd.print("                    ");
       lcd.setCursor(0,2);      
-      lcd.print(line2);
+      lcd.print(line1);
       lcd.setCursor(0,3);
       lcd.print("                    ");
       lcd.setCursor(0,3);
-      lcd.print(line3);
+      lcd.print(line2);
 #endif       
 
 #ifdef DEBUG         
          debug.print(F("Callsign:"));
          debug.println(callsign);
          debug.print(F("Data:"));
-         debug.print(line2);
-         debug.println(line3);      
+         debug.println(data);
 #endif  
 
 #ifdef TFT22
@@ -762,11 +775,6 @@ float convertDegMin(float decDeg) {
   int intDeg = decDeg;
   decDeg -= intDeg;
   decDeg *= 60;
-  //int minDeg = decDeg;
-  //decDeg -= minDeg;
-  //decDeg *= 60;
-  //int secDeg = decDeg;
-  
   DegMin = ( intDeg*100 ) + decDeg;
  
  return DegMin; 
