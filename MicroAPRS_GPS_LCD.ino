@@ -64,19 +64,22 @@
  
  3 Aug 2014 :-
  - Added #define codes to turn on/off LCD, DEBUG and TFT
- - Added TFT codes
+ - Added TFT codes for 2.2" SPI TFT ( runs on 3.3V )
  - Added the F() macros to reduce memory usages on static texts
+ 
+ 6 Aug 2014
+ - Added Course/Speed/Alt into comment field readable by aprs.fi
+ - 
  
  TODO :-
  - implement compression / decompression codes for smaller Tx packets
+ - Telemetry packets
+ - Split comments and location for smaller Tx packets
  
  Bugs :-
  
- - Packet are sometimes not decoded properly due to input power supply
- - when using battery, the decode was fine but when using battery eliminator, too much noise
-   from the power supply goes into the Modem. This is observed using an oscilloscope on the audio
-   input before A0
- - Packet Decode is intermitten
+ - Not splitting callsign and info properly
+ - Packets received from Modem is split into two serial read
  - With TFT codes, the AltSoftSerial could not get the speed and course on time with lots of checksum errors
  - 
  
@@ -122,7 +125,7 @@ Adafruit_ILI9340 tft = Adafruit_ILI9340(_cs, _dc, _rst);
 LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
 #endif
 
-#define VERSION "Arduino OpenTrackR v0.3 " 
+#define VERSION "SVTrackR v0.4 " 
 
 // Altdebug default on UNO is 8-Rx, 9-Tx
 //AltSoftSerial ss;
@@ -186,10 +189,10 @@ void setup()
   debug.flush();
   debug.println();
   debug.println();
-  debug.println(F("=================================="));  
+  debug.println(F("=========================================="));
   debug.print(F("DEBUG:- ")); 
   debug.println(F(VERSION)); 
-  debug.println(F("=================================="));  
+  debug.println(F("=========================================="));
   debug.println();
 #endif
 
@@ -406,13 +409,13 @@ void loop()
         // Check for heading more than 25 degrees
         if ( headingDelta < -25 || headingDelta >  25 ) {
 #ifdef DEBUG          
-            debug.println();        
-            debug.print(F("Heading, current:"));      
-            debug.print(currentHeading);
-            debug.print(F(" previous:"));      
-            debug.print(previousHeading);
-            debug.print(F(" delta:"));      
-            debug.println(headingDelta);        
+            //debug.println();        
+            //debug.print(F("Heading, current:"));      
+            //debug.print(currentHeading);
+            //debug.print(F(" previous:"));      
+            //debug.print(previousHeading);
+            //debug.print(F(" delta:"));      
+            //debug.println(headingDelta);        
             debug.print(F("*** Heading Change "));
             debug.println(txCounter); 
 #endif            
@@ -520,10 +523,44 @@ void TxtoRadio() {
 
      if ( lastTx >= 5000 ) {
 #ifdef DEBUG                 
-       debug.print("Date/Time: ");
-       debug.print(gps.date.value());
+       debug.print("Time/Date: ");
+//       debug.print(gps.date.value());
+       byte hour = gps.time.hour() +8; // GMT+8 is my timezone
+       byte day = gps.date.day();
+       
+       if ( hour > 23 ) {
+           hour = hour -24;
+           day++;
+       }  
+       if ( hour < 10 ) {
+       debug.print("0");       
+       }       
+       debug.print(hour);         
+       debug.print(":");  
+       if ( gps.time.minute() < 10 ) {
+       debug.print("0");       
+       }
+       debug.print(gps.time.minute());
+       debug.print(":");
+       if ( gps.time.second() < 10 ) {
+       debug.print("0");       
+       }       
+       debug.print(gps.time.second());
        debug.print(" ");
-       debug.println(gps.time.value());
+
+       if ( day < 10 ) {
+       debug.print("0");
+       }         
+       debug.print(day);
+       debug.print("/");
+       if ( gps.date.month() < 10 ) {
+       debug.print("0");       
+       }
+       debug.print(gps.date.month());
+       debug.print("/");
+       debug.print(gps.date.year());
+       debug.println();
+
        debug.print("GPS: ");
        debug.print(lastTxLat,5);
        debug.print(" ");
@@ -538,22 +575,20 @@ void TxtoRadio() {
        debug.print((int) gps.speed.kmph());
        debug.print(" Head:");
        debug.print(currentHeading);          
-       debug.print(" PrevHead:");
-       debug.print(previousHeading); 
        debug.print(" Alt:");
        debug.print(gps.altitude.meters());
        debug.print("m");
        debug.println();
 
-       debug.print("Distance(m): Home:");
+       debug.print(F("Distance(m): Home:"));
        debug.print(homeDistance,2);
        debug.print(" Last:");  
        debug.print(lastTxdistance,2);
        debug.println(); 
      
-       debug.print("Writing to radio since ");  
-       debug.print(lastTx); 
-       debug.println(" ms");   
+       debug.print(F("Tx since "));  
+       debug.print((float)lastTx/1000); 
+       debug.println(" sec");   
 #endif             
        // Turn on the buzzer
        digitalWrite(buzzerPin,HIGH);  
@@ -571,15 +606,21 @@ void TxtoRadio() {
        lngOut.concat(tmp);
        lngOut.concat("E");
      
-       cmtOut.concat("@ ");
-       cmtOut.concat(VERSION);
+       cmtOut.concat("@");
+       cmtOut.concat(padding((int)currentHeading,3));
+       cmtOut.concat("/");
+       cmtOut.concat(padding((int)gps.speed.mph(),3));
+       cmtOut.concat("/A=");
+       cmtOut.concat(padding((int)gps.altitude.feet(),6));
+       cmtOut.concat(" ");
+       cmtOut.concat(VERSION);       
        cmtOut.concat((float) readVcc()/1000);
        cmtOut.concat("V ");
-       cmtOut.concat((int) gps.speed.kmph());
-       cmtOut.concat("km/h ");
        cmtOut.concat(gps.hdop.value());
        cmtOut.concat("/");
        cmtOut.concat(gps.satellites.value());
+       
+
 #ifdef DEBUG          
        debug.print("TX STR: ");
        debug.print(latOut);
@@ -604,7 +645,9 @@ void TxtoRadio() {
        lastTx = 0;
 #ifdef DEBUG               
        debug.print(F("FreeRAM:"));
-       debug.println(freeRam());
+       debug.print(freeRam());
+       debug.print(" Uptime:");
+       debug.println((float) millis()/1000);
        debug.println(F("=========================================="));
 #endif     
      
@@ -615,6 +658,7 @@ void TxtoRadio() {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void processDebugData(const char * data) {
+  // Send commands to modem
   Serial.println(data);
 }  // end of processDebugData
   
@@ -792,6 +836,20 @@ long readVcc() {
   result = ADCL;
   result |= ADCH<<8;
   result = 1126400L / result; // Back-calculate AVcc in mV
+  return result;
+}
+
+String padding( int number, byte width ) {
+  String result;
+  
+  // Prevent a log10(0) = infinity
+  int temp = number;
+  if (!temp) { temp++; }
+    
+  for ( int i=0;i<width-(log10(temp))-1;i++) {
+       result.concat('0');
+  }
+  result.concat(number);
   return result;
 }
 
