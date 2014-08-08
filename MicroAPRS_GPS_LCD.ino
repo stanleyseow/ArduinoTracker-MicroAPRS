@@ -141,8 +141,8 @@ SoftwareSerial debug(2,3);
 const byte buzzerPin = 4;
 unsigned int txCounter = 0;
 unsigned long txTimer = 0;
-long lastTx = 0;
-long txInterval = 60000L;  // Initial 60 secs internal
+unsigned long lastTx = 0;
+unsigned long txInterval = 80000L;  // Initial 60 secs internal
 
 int lastCourse = 0;
 byte lastSpeed = 0;
@@ -209,8 +209,8 @@ void setup()
 void loop()
 {
     // Speed in km/h
-    byte highSpeed = 70;       // High speed  
-    byte lowSpeed = 30;        // Low speed
+    const byte highSpeed = 80;       // High speed  
+    const byte lowSpeed = 30;        // Low speed
     char c;
     boolean inputComplete = false;
     int headingDelta = 0;
@@ -372,15 +372,15 @@ void loop()
 // This change will not affect the countdown timer
 // Based on HamHUB Smart Beaconing(tm) algorithm
 
-      if ( ((int) gps.speed.kmph()) < 5 ) {
+      if ( gps.speed.kmph() < 5 ) {
             txInterval = 300000;         // Change Tx internal to 5 mins
-       } else if ( ((int) gps.speed.kmph()) < lowSpeed ) {
-            txInterval = 60000;          // Change Tx interval to 60
-       } else if ( ((int) gps.speed.kmph()) > highSpeed ) {
+       } else if ( gps.speed.kmph() < lowSpeed ) {
+            txInterval = 70000;          // Change Tx interval to 60
+       } else if ( gps.speed.kmph() > highSpeed ) {
             txInterval = 30000;          // Change Tx interval to 30 secs
        } else {
         // Interval inbetween low and high speed 
-            txInterval =  (int) ( highSpeed / (int) gps.speed.kmph() ) * 30000;       
+            txInterval = (highSpeed / gps.speed.kmph()) * 30000;       
        } // endif
       
    }  // endof gps.time.isUpdated()
@@ -507,7 +507,8 @@ void loop()
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void serialEvent() {
-    decodeAPRS(); 
+// Disable Serial Decode  
+//    decodeAPRS(); 
 }
 
 void TxtoRadio() {
@@ -521,10 +522,10 @@ void TxtoRadio() {
      lastTxLat = gps.location.lat();
      lastTxLng = gps.location.lng();
 
+      // This prevent ANY condition to Tx below 5 secs
      if ( lastTx >= 5000 ) {
 #ifdef DEBUG                 
        debug.print("Time/Date: ");
-//       debug.print(gps.date.value());
        byte hour = gps.time.hour() +8; // GMT+8 is my timezone
        byte day = gps.date.day();
        
@@ -574,7 +575,7 @@ void TxtoRadio() {
        debug.print(" km/h:");           
        debug.print((int) gps.speed.kmph());
        debug.print(" Head:");
-       debug.print(currentHeading);          
+       debug.print((int) gps.course.deg());          
        debug.print(" Alt:");
        debug.print(gps.altitude.meters());
        debug.print("m");
@@ -607,7 +608,7 @@ void TxtoRadio() {
        lngOut.concat("E");
      
        cmtOut.concat("@");
-       cmtOut.concat(padding((int)currentHeading,3));
+       cmtOut.concat(padding((int) gps.course.deg(),3));
        cmtOut.concat("/");
        cmtOut.concat(padding((int)gps.speed.mph(),3));
        cmtOut.concat("/A=");
@@ -641,7 +642,7 @@ void TxtoRadio() {
        digitalWrite(buzzerPin,LOW);     
        // Reset the txTimer & Tx internal   
     
-       txInterval = 60000;
+       txInterval = 80000;
        lastTx = 0;
 #ifdef DEBUG               
        debug.print(F("FreeRAM:"));
@@ -743,10 +744,6 @@ void decodeAPRS() {
       String decoded="";
       int callIndex,callIndex2, dataIndex = 0;
 
-      //debug.println();
-      //debug.print("Entering decodeAPRS (");
-      //debug.print(millis());
-      //debug.println(")");
       while ( Serial.available() > 0 ) {
          c = Serial.read();
 //#ifdef DEBUG         
