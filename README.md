@@ -24,6 +24,11 @@ Arduino TrackR interface for MicroAPRS firmware
  - Pin 10 - Buzzer during Radio Tx
  - Pin 2,3 - Connect to FTDI Serial USB module for debugging
  
+ Library needed :-
+ AltSoftSerial ( https://www.pjrc.com/teensy/td_libs_AltSoftSerial.html )
+ tinyGPS++ ( http://arduiniana.org/libraries/tinygpsplus/ )
+ 
+ 
  Instructions :-
  
  Download the MicroAPRS compiled hex called ( https://github.com/markqvist/MicroAPRS/tree/master/images )
@@ -38,7 +43,7 @@ Arduino TrackR interface for MicroAPRS firmware
  Step 2: 
  The command line are :-
  
- avrdude -C ./avrdude.conf -v -patmega328p -carduino -P /dev/tty.usbmodem1411 -b115200 -D -Uflash:w:Modem.hex:i
+ avrdude -C avrdude.conf -v -patmega328p -carduino -P COMx -b57600 -D -Uflash:w:Modem.hex:i
  
 Below are the sample output during the hex upload process :-
 
