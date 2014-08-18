@@ -1,4 +1,6 @@
 /*
+
+ SVTrackR ( Arduino APRS Tracker )
  Copyright (C) 2014 Stanley Seow <stanleyseow@gmail.com>
 
  This program is free software; you can redistribute it and/or
@@ -15,7 +17,7 @@
  Pin 8,9 ( rx,tx ) connects to GPS module
  Pin 2,3 connect to debug serial port
  
- Pin 10 - Buzzer during Radio Tx
+ Pin 4 - Buzzer during Radio Tx
  
  Date : 03 July 2014
  Written by Stanley Seow
@@ -69,7 +71,9 @@
  
  6 Aug 2014
  - Added Course/Speed/Alt into comment field readable by aprs.fi
- - 
+ 
+ 10 Aug 2014
+ - Added support for teensy 3.1 (mcu ARM Cortex M4) 
  
  TODO :-
  - implement compression / decompression codes for smaller Tx packets
@@ -86,12 +90,29 @@
 */
 
 // Needed this to prevent compile error for #defines
+
+#define VERSION "SVTrackR v0.5 " 
+
+
 #if 1
 __asm volatile ("nop");
 #endif
 
+#ifndef _CONFIGURATION_INCLUDED
+#define _CONFIGURATION_INCLUDED
+#include "config.h"
+#endif
+
+#if defined(__arm__) && defined(TEENSYDUINO)
+    // should use uinstd.h to define sbrk but Due causes a conflict
+    extern "C" char* sbrk(int incr);
+#else  // this is for AVR
+    extern char *__brkval;
+    extern char __bss_end;
+#endif  
+
 // Turn on/off 20x4 LCD
-#undef LCD20x4
+#define LCD20x4
 // Turn on/off debug
 #define DEBUG
 // Turn on/off 2.2" TFT
@@ -111,30 +132,44 @@ Adafruit_ILI9340 tft = Adafruit_ILI9340(_cs, _dc, _rst);
 #endif
 
 #ifdef DEBUG 
-#include <SoftwareSerial.h>
+  #if defined(__arm__) && defined(TEENSYDUINO)
+  #else
+  #include <SoftwareSerial.h>
+  #endif
 #endif
 
+// Only needed for ATmega328
+#if defined (__AVR_ATmega328P__) 
 #include <AltSoftSerial.h>
+#endif 
+
 #include <TinyGPS++.h>
-#include <LiquidCrystal.h>
-
-
 
 #ifdef LCD20x4
 // My wiring for LCD on breadboard
+#include <LiquidCrystal.h>
 LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
 #endif
 
-#define VERSION "SVTrackR v0.4 " 
 
 // Altdebug default on UNO is 8-Rx, 9-Tx
 //AltSoftSerial ss;
-AltSoftSerial ss(8,9);
+#if defined (__AVR_ATmega328P__) 
+  AltSoftSerial ss(8,9);
+#else
+// Map hw Serial2 to ss for gps port
+  #define ss Serial2 
+#endif
+
 TinyGPSPlus gps;
 
 #ifdef DEBUG
 // Connect to GPS module on pin 9, 10 ( Rx, Tx )
-SoftwareSerial debug(2,3);
+  #if defined (__AVR_ATmega328P__) 
+    SoftwareSerial debug(2,3);
+  #else
+    #define debug Serial3
+  #endif
 #endif
 
 // Pin for Tx buzzer
@@ -149,7 +184,8 @@ byte lastSpeed = 0;
 
 int previousHeading, currentHeading = 0;
 // Initial lat/lng pos, change to your base station coordnates
-float lastTxLat = 3.16925, lastTxLng =  101.64972;
+float lastTxLat = HOME_LAT;
+float lastTxLng = HOME_LON;
 float lastTxdistance, homeDistance = 0.0;
 
 const unsigned int MAX_DEBUG_INPUT = 30;
@@ -214,18 +250,21 @@ void loop()
     char c;
     boolean inputComplete = false;
     int headingDelta = 0;
-    const double HOME_LAT = 3.16925 , HOME_LON = 101.64972;
     
 #ifdef DEBUG    
     // Send commands from debug serial into hw Serial char by char 
+#if defined (__AVR_ATmega328P__)    
     debug.listen();
+#endif  
     if ( debug.available() > 0  ) {
           processIncomingDebug(debug.read());
     }
 #endif    
     
     // Turn on listen() on GPS
-    ss.listen();                    
+#if defined (__AVR_ATmega328P__)        
+    ss.listen();  
+#endif    
     while ( ss.available() > 0 ) {
       gps.encode(ss.read());
     }
@@ -615,7 +654,7 @@ void TxtoRadio() {
        cmtOut.concat(padding((int)gps.altitude.feet(),6));
        cmtOut.concat(" ");
        cmtOut.concat(VERSION);       
-       cmtOut.concat((float) readVcc()/1000);
+       cmtOut.concat((long) readVcc()/1000);
        cmtOut.concat("V ");
        cmtOut.concat(gps.hdop.value());
        cmtOut.concat("/");
@@ -710,17 +749,21 @@ void configModem() {
 #endif                            
 */
 
-  Serial.println("c9W2SVT");  // Set SRC Callsign ,PLEASE CHANGE THIS TOI YOUR CALLSIGN
+  Serial.print("c");  // Set SRC Callsign
+  Serial.println(MYCALL);  // Set SRC Callsign
   delay(200);
-  Serial.println("sc8");      // Set SRC SSID
+  Serial.print("sc");      // Set SRC SSID
+  Serial.println(CALL_SSID);      // Set SRC SSID
   delay(200);
   Serial.println("pd0");      // Disable printing DST 
   delay(200);
   Serial.println("pp0");      // Disable printing PATH
   delay(200);
-  Serial.println("lsn");      // Set symbol n / Bluedot
+  Serial.print("ls");      // Set symbol n / Bluedot
+  Serial.println(SYMBOL_CHAR);      // Set symbol n / Bluedot
   delay(200);
-  Serial.println("lts");      // Standard symbol 
+  Serial.print("lt");      // Standard symbol 
+  Serial.println(SYMBOL_TABLE);      // Standard symbol 
   delay(200);
   Serial.println("V1");      // Silent Mode ON 
   delay(200);
@@ -800,8 +843,7 @@ void decodeAPRS() {
       tft.setTextColor(ILI9340_WHITE);  
       tft.print(" Data:");
       tft.setTextColor(ILI9340_CYAN);
-      tft.println(line2);   
-      tft.println(line3);      
+      tft.println(data);   
   
 #endif
 
@@ -825,6 +867,7 @@ float convertDegMin(float decDeg) {
 
 long readVcc() {                 
   long result;
+#if defined (__AVR_ATmega328P__)      
   // Read 1.1V reference against AVcc
   ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
   delay(2);                     // Wait for Vref to settle
@@ -833,6 +876,7 @@ long readVcc() {
   result = ADCL;
   result |= ADCH<<8;
   result = 1126400L / result; // Back-calculate AVcc in mV
+#endif  
   return result;
 }
 
@@ -850,9 +894,13 @@ String padding( int number, byte width ) {
   return result;
 }
 
+
 int freeRam() {
-  extern int __heap_start, *__brkval; 
-  int v; 
-  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+    char top;
+    #if defined(__arm__) && defined(TEENSYDUINO)
+        return &top - reinterpret_cast<char*>(sbrk(0));
+    #else  // non ARM, this is AVR
+        return __brkval ? &top - __brkval : &top - &__bss_end;
+    #endif  
 }
 
