@@ -75,6 +75,11 @@
  10 Aug 2014
  - Added support for teensy 3.1 (mcu ARM Cortex M4) 
  
+ 19 Aug 2014
+ - Added GPS simulator codes
+ - Added Tx status every 10 Tx
+ - Added counter for Headins, Time, Distance and Button
+ 
  TODO :-
  - implement compression / decompression codes for smaller Tx packets
  - Telemetry packets
@@ -102,21 +107,15 @@ __asm volatile ("nop");
 #define _CONFIGURATION_INCLUDED
 #include "config.h"
 #endif
-
-#if defined(__arm__) && defined(TEENSYDUINO)
-    // should use uinstd.h to define sbrk but Due causes a conflict
-    extern "C" char* sbrk(int incr);
-#else  // this is for AVR
-    extern char *__brkval;
-    extern char __bss_end;
-#endif  
-
+ 
 // Turn on/off 20x4 LCD
-#define LCD20x4
+#undef LCD20x4
 // Turn on/off debug
 #define DEBUG
 // Turn on/off 2.2" TFT
 #undef TFT22
+// Turn on/off GPS simulation
+#undef GPSSIM
 
 #ifdef TFT22
 #include <SPI.h>
@@ -167,20 +166,35 @@ TinyGPSPlus gps;
 // Connect to GPS module on pin 9, 10 ( Rx, Tx )
   #if defined (__AVR_ATmega328P__) 
     SoftwareSerial debug(2,3);
-  #else
+  #elif defined(__arm__) && defined(TEENSYDUINO)
     #define debug Serial3
   #endif
 #endif
 
-// Pin for Tx buzzer
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Put All global defines here
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef LCD20x4  
+const byte buzzerPin = 10;
+#else
 const byte buzzerPin = 4;
+#endif
+
+const byte ledPin = 13;
+
+// Detect for RF signal
+byte rfSignal = 0;
+byte missedPackets = 0;
+
 unsigned int txCounter = 0;
 unsigned long txTimer = 0;
 unsigned long lastTx = 0;
-unsigned long txInterval = 80000L;  // Initial 60 secs internal
+unsigned long txInterval = 80000L;  // Initial 80 secs internal
 
 int lastCourse = 0;
 byte lastSpeed = 0;
+
+static unsigned int Hd,Ti,Di,Bn = 0;
 
 int previousHeading, currentHeading = 0;
 // Initial lat/lng pos, change to your base station coordnates
@@ -188,16 +202,31 @@ float lastTxLat = HOME_LAT;
 float lastTxLng = HOME_LON;
 float lastTxdistance, homeDistance = 0.0;
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 const unsigned int MAX_DEBUG_INPUT = 30;
 
 void setup()
 {
+  
+  
+#if defined(__arm__) && defined(TEENSYDUINO)
+// This is for reading the internal reference voltage
+  analogReference(EXTERNAL);
+  analogReadResolution(12);
+  analogReadAveraging(32);
+#endif
+  
 #ifdef LCD20x4  
   // LCD format is Col,Row for 20x4 LCD
   lcd.begin(20,4);
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print("Arduino OpenTrackR"); 
+  lcd.print(VERSION); 
+  // This is for buzzer, uncomment below for louder buzzer
+  // pinMode(buzzerPin, OUTPUT);
+  // LED pin on 13, only enable for non-SPI TFT
 #endif  
 
 #ifdef TFT22
@@ -206,14 +235,16 @@ void setup()
   tft.setCursor(0,0);
   tft.setTextSize(3); 
   tft.setTextColor(ILI9340_WHITE);  
-  tft.print("OpenTrackR"); 
+  tft.print("SVTrackR"); 
   delay(1000);
   tft.fillScreen(ILI9340_BLACK);
-
 #endif
 
-// This is for buzzer
-//pinMode(4, OUTPUT);
+#ifndef TFT
+  pinMode(ledPin,OUTPUT);
+#endif
+
+
   
   Serial.begin(9600);
 #ifdef DEBUG
@@ -237,6 +268,16 @@ void setup()
   configModem();
   
   txTimer = millis();
+
+#ifdef LCD20x4   
+  #ifdef GPSSIM     
+    lcd.setCursor(0,3);
+    lcd.print("GPS Sim begin"); 
+    delay(1000);
+    lcd.clear();
+  #endif
+#endif
+
  
 } // end setup()
 
@@ -283,6 +324,13 @@ void loop()
           gps.location.lng(),
           lastTxLat,
           lastTxLng);
+          
+      // Get headings and heading delta
+      currentHeading = (int) gps.course.deg();
+      if ( currentHeading >= 180 ) { 
+      currentHeading = currentHeading-180; 
+      }
+      headingDelta = (int) ( previousHeading - currentHeading ) % 360;   
      
     } // endof gps.location.isUpdated()
 
@@ -293,11 +341,13 @@ void loop()
     
    // Turn on LED 13 when Satellites more than 3  
    // Disable when using TFT / SPI
+#ifndef TFT 
    if ( gps.satellites.value() > 3 ) {
-     digitalWrite(13,HIGH);  
+     digitalWrite(ledPin,HIGH);  
    } else {
-     digitalWrite(13,LOW);     
+     digitalWrite(ledPin,LOW);     
    }
+#endif
 
 #ifdef TFT22
       //tft.fillScreen(ILI9340_BLACK);
@@ -381,10 +431,11 @@ void loop()
 #endif
 
 #ifdef LCD20x4
+     lcd.clear();
      lcd.setCursor(1,0);
      lcd.print("   ");
-     lcd.setCursor(1,0);
-     lcd.print(txCounter);
+     //lcd.setCursor(1,0);
+     //lcd.print(txCounter);
 
      lcd.setCursor(4,0);
      lcd.print("       ");
@@ -405,6 +456,30 @@ void loop()
      lcd.print("  "); 
      lcd.setCursor(18,0);   
      lcd.print(gps.satellites.value());
+    
+     lcd.setCursor(0,1);
+     lcd.print("H:");
+     lcd.print(Hd);
+     lcd.print(" T:");
+     lcd.print(Ti);
+     lcd.print(" D:");
+     lcd.print(Di);
+     lcd.print(" B:");
+     lcd.print(Bn);
+     
+     lcd.setCursor(0,2);
+     lcd.print("S:");
+     lcd.print((int) gps.speed.kmph());
+     lcd.print(" H:");
+     lcd.print((int) gps.course.deg()); 
+     lcd.print(" Ttl:");
+     lcd.print(txCounter);
+ 
+     lcd.setCursor(0,3);
+     lcd.print(gps.location.lat(),5);
+     lcd.setCursor(10,3);
+     lcd.print(gps.location.lng(),5);
+     delay(30); // To see the LCD display, add a little delays here
 #endif
      
 // Change the Tx internal based on the current speed
@@ -424,18 +499,20 @@ void loop()
       
    }  // endof gps.time.isUpdated()
      
-    
+
+/*    
 ///////////////// Triggered by course updates /////////////////////// 
      
+     
     if ( gps.course.isUpdated() ) {
+        // Get headings and heading delta
+        currentHeading = (int) gps.course.deg();
+        if ( currentHeading >= 180 ) { currentHeading = currentHeading-180; }
       
-      // Get headings and heading delta
-      currentHeading = (int) gps.course.deg();
-      if ( currentHeading >= 180 ) { currentHeading = currentHeading-180; }
-      
-      headingDelta = (int) ( previousHeading - currentHeading ) % 360;
-    } // endof gps.course.isUpdated()
+        headingDelta = (int) ( previousHeading - currentHeading ) % 360;     
 
+    } // endof gps.course.isUpdated()
+*/
           
  ////////////////////////////////////////////////////////////////////////////////////
  // Check for when to Tx packet
@@ -444,19 +521,18 @@ void loop()
   lastTx = 0;
   lastTx = millis() - txTimer;
 
-    if ( (lastTx > 5000)  && (gps.satellites.value() > 3) ) {
+  // Only check the below if locked satellites < 3
+#ifdef GPSSIM
+   if ( gps.satellites.value() == 0 ) {
+#else
+   if ( gps.satellites.value() > 3 ) {
+#endif    
+    if ( lastTx > 5000 ) {
         // Check for heading more than 25 degrees
         if ( headingDelta < -25 || headingDelta >  25 ) {
-#ifdef DEBUG          
-            //debug.println();        
-            //debug.print(F("Heading, current:"));      
-            //debug.print(currentHeading);
-            //debug.print(F(" previous:"));      
-            //debug.print(previousHeading);
-            //debug.print(F(" delta:"));      
-            //debug.println(headingDelta);        
-            debug.print(F("*** Heading Change "));
-            debug.println(txCounter); 
+            Hd++;
+#ifdef DEBUG                
+            debug.println(F("*** Heading Change "));
 #endif            
 #ifdef LCD20x4            
             lcd.setCursor(0,0);
@@ -470,15 +546,15 @@ void loop()
         } // endif headingDelta
     } // endif lastTx > 5000
     
-    if ( (lastTx > 10000) && (gps.satellites.value() > 3) ) {
-         // check of the last Tx distance is more than 500m
-         if ( lastTxdistance > 500 ) {  
+    if ( lastTx > 10000 ) {
+         // check of the last Tx distance is more than 600m
+         if ( lastTxdistance > 600 ) {  
+            Di++;
 #ifdef DEBUG                     
             debug.println();
-            debug.print(F("*** Distance > 500m ")); 
-            debug.println(txCounter);  
+            debug.println(F("*** Distance > 600m ")); 
             debug.print(F("lastTxdistance:"));
-            debug.print(lastTxdistance);
+            debug.println(lastTxdistance);
 #endif          
 #ifdef LCD20x4                        
             lcd.setCursor(0,0);
@@ -492,10 +568,11 @@ void loop()
          } // endif lastTxdistance
     } // endif lastTx > 10000
     
-    if ( (lastTx >= txInterval) && ( gps.satellites.value() > 3) ) {
+    if ( lastTx >= txInterval ) {
         // Trigger Tx Tracker when Tx interval is reach 
         // Will not Tx if stationary bcos speed < 5 and lastTxDistance < 20
         if ( lastTxdistance > 20 ) {
+            Ti++;
 #ifdef DEBUG                    
                    debug.println();
                    debug.print(F("lastTx:"));
@@ -504,8 +581,7 @@ void loop()
                    debug.print(txInterval);     
                    debug.print(F(" lastTxdistance:"));
                    debug.println(lastTxdistance);               
-                   debug.print(F("*** txInterval "));  
-                   debug.println(txCounter);  
+                   debug.println(F("*** txInterval "));  
 
 #endif                   
 #ifdef LCD20x4            
@@ -520,13 +596,14 @@ void loop()
         } // endif lastTxdistance > 20 
     } // endif of check for lastTx > txInterval
 
+    } // Endif check for satellites
     // Check if the analog0 is plugged into 5V and more than 10 secs
     if ( analogRead(0) > 700 && (lastTx > 10000) ) {
+        Bn++;
 #ifdef DEBUG                
                 debug.println();             
                 debug.println(analogRead(0));
-                debug.print(F("*** Button ")); 
-                debug.println(txCounter);  
+                debug.println(F("*** Button ")); 
  
 #endif                
 #ifdef LCD20x4                            
@@ -539,7 +616,6 @@ void loop()
                 lastTx = millis() - txTimer;
      } // endif check analog0
 
-
      
 } // end loop()
 
@@ -547,22 +623,50 @@ void loop()
 
 void serialEvent() {
 // Disable Serial Decode  
-//    decodeAPRS(); 
+#ifdef LCD20x4
+    decodeAPRS(); 
+#endif    
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+//  Function to Tx to Radio
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 void TxtoRadio() {
   
      char tmp[10];
      float latDegMin, lngDegMin = 0.0;
      String latOut, lngOut, cmtOut = "";
+     unsigned int Mem = freeRam();
+     float Volt = (float) readVcc()/1000;
   
-     txCounter++;
-     
      lastTxLat = gps.location.lat();
      lastTxLng = gps.location.lng();
 
-      // This prevent ANY condition to Tx below 5 secs
-     if ( lastTx >= 5000 ) {
+     /*
+     // Check for Rx APRS packets from Modem
+     if ( !rfSignal ) {
+          missedPackets++;
+#ifdef DEBUG                 
+       debug.print("missedPackets:");
+       debug.println(missedPackets);
+#endif       
+     }
+     // Reset the rfSignal flag
+     rfSignal = 0;
+     
+     if ( missedPackets > 5 ) {
+      
+      // Store all the Tx packets into an array with timestamped
+      //  
+     
+      missedPackets = 0;  // Reset the counter
+     }
+     else 
+     */
+     
+     if ( lastTx >= 5000 ) { // This prevent ANY condition to Tx below 5 secs
 #ifdef DEBUG                 
        debug.print("Time/Date: ");
        byte hour = gps.time.hour() +8; // GMT+8 is my timezone
@@ -632,7 +736,27 @@ void TxtoRadio() {
 #endif             
        // Turn on the buzzer
        digitalWrite(buzzerPin,HIGH);  
-          
+
+       // Only send status/version every 10 packets to save packet size  
+       if ( (txCounter % 10) == 0 ) {
+         cmtOut.concat("!>");                
+         cmtOut.concat(VERSION);       
+         cmtOut.concat(Volt);
+         cmtOut.concat("V S:");
+         cmtOut.concat(gps.satellites.value());
+         cmtOut.concat(" M:");         
+         cmtOut.concat(Mem);
+
+#ifdef DEBUG          
+       debug.print("TX STR: ");
+       debug.print(cmtOut);  
+       debug.println(); 
+#endif               
+        Serial.println(cmtOut);
+        delay(1000);   
+        cmtOut = ""; 
+       } 
+       
        latDegMin = convertDegMin(lastTxLat);
        lngDegMin = convertDegMin(lastTxLng);
 
@@ -652,32 +776,25 @@ void TxtoRadio() {
        cmtOut.concat(padding((int)gps.speed.mph(),3));
        cmtOut.concat("/A=");
        cmtOut.concat(padding((int)gps.altitude.feet(),6));
-       cmtOut.concat(" ");
-       cmtOut.concat(VERSION);       
-       cmtOut.concat((long) readVcc()/1000);
-       cmtOut.concat("V ");
-       cmtOut.concat(gps.hdop.value());
-       cmtOut.concat("/");
-       cmtOut.concat(gps.satellites.value());
-       
+       cmtOut.concat(" Seq:");
+       cmtOut.concat(txCounter);       
 
 #ifdef DEBUG          
        debug.print("TX STR: ");
-       debug.print(latOut);
-       debug.print(" ");           
-       debug.print(lngOut);
-       debug.println();
+       debug.print(latOut);  
+       debug.print(" ");       
+       debug.print(lngOut);  
+       debug.print(" ");
        debug.print(cmtOut);  
        debug.println(); 
-#endif     
-
+#endif         
        Serial.println(latOut);
-       delay(300);
+       delay(200);
        Serial.println(lngOut);
-       delay(300);
+       delay(200);
        Serial.println(cmtOut);
-       delay(300);
-                 
+       delay(200);
+       
        digitalWrite(buzzerPin,LOW);     
        // Reset the txTimer & Tx internal   
     
@@ -685,13 +802,15 @@ void TxtoRadio() {
        lastTx = 0;
 #ifdef DEBUG               
        debug.print(F("FreeRAM:"));
-       debug.print(freeRam());
+       debug.print(Mem);
        debug.print(" Uptime:");
        debug.println((float) millis()/1000);
        debug.println(F("=========================================="));
 #endif     
-     
+
+       txCounter++;
      } // endif lastTX
+     
      
 } // endof TxtoRadio()
 
@@ -740,14 +859,12 @@ void configModem() {
 // pd0 - turn off DST display
 // pp0 - turn on PATH display
 
-/*
+
 #ifdef LCD20x4                            
-  lcd.setCursor(0,0);
+  lcd.setCursor(0,1);
   lcd.print("Configuring modem");
-  lcd.setCursor(0,0);
-  lcd.print("Setting callsig");
 #endif                            
-*/
+
 
   Serial.print("c");  // Set SRC Callsign
   Serial.println(MYCALL);  // Set SRC Callsign
@@ -771,10 +888,9 @@ void configModem() {
   //Serial.println("S");        // Save config
   
 #ifdef LCD20x4                              
-  lcd.setCursor(0,0);
+  lcd.setCursor(0,2);
   lcd.print("Done................");
   delay(500); 
-  lcd.clear();
 #endif                             
   
 }
@@ -793,6 +909,7 @@ void decodeAPRS() {
 //         debug.print(c);
 //#endif         
          decoded.concat(c); 
+         rfSignal = 1;
       }   
 
 #ifdef DEBUG   
@@ -866,8 +983,11 @@ float convertDegMin(float decDeg) {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 long readVcc() {                 
-  long result;
-#if defined (__AVR_ATmega328P__)      
+  long result;  
+#if defined(__arm__) && defined(TEENSYDUINO)
+    extern "C" char* sbrk(int incr);
+    result = 1195 * 4096 /analogRead(39);
+#else
   // Read 1.1V reference against AVcc
   ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
   delay(2);                     // Wait for Vref to settle
@@ -875,8 +995,9 @@ long readVcc() {
   while (bit_is_set(ADCSRA,ADSC));
   result = ADCL;
   result |= ADCH<<8;
-  result = 1126400L / result; // Back-calculate AVcc in mV
+  result = 1126400L / result; // Back-calculate AVcc in mV  
 #endif  
+
   return result;
 }
 
@@ -896,11 +1017,13 @@ String padding( int number, byte width ) {
 
 
 int freeRam() {
-    char top;
-    #if defined(__arm__) && defined(TEENSYDUINO)
+#if defined(__arm__) && defined(TEENSYDUINO)
+  char top;
         return &top - reinterpret_cast<char*>(sbrk(0));
-    #else  // non ARM, this is AVR
-        return __brkval ? &top - __brkval : &top - &__bss_end;
-    #endif  
+#else  // non ARM, this is AVR
+  extern int __heap_start, *__brkval; 
+  int v; 
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+#endif  
 }
 
