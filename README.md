@@ -33,9 +33,9 @@ Xloader to load this hex image to the Arduino / Mini Pro :-
     
 
     
-![alt text](https://github.com/stanleyseow/ArduinoTracker-MicroAPRS/photos/MicroModem.jpg "Modem")
+![alt text](https://github.com/stanleyseow/ArduinoTracker-MicroAPRS/blob/master/photos/MicroModem.jpg "Modem")
 
-![alt text](https://github.com/stanleyseow/ArduinoTracker-MicroAPRS/photos/SVTrackR.jpg "Tracker")
+![alt text](https://github.com/stanleyseow/ArduinoTracker-MicroAPRS/blob/master/photos/SVTrackR.jpg "Tracker")
 
 
 
