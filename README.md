@@ -32,10 +32,9 @@ Xloader to load this hex image to the Arduino / Mini Pro :-
     5. Select the COM port and press Upload
     
 
-    
-![alt text](https://raw.github.com/stanleyseow/ArduinoTracker-MicroAPRS/photos/MicroModem.jpg "Modem")
+![MicroAPRS Modem](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/MicroModem.jpg)
 
-![alt text](https://raw.github.com/stanleyseow/ArduinoTracker-MicroAPRS/photos/SVTrackR.jpg "Tracker")
+![SVTrackR](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrackR.jpg)
 
 
 
