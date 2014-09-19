@@ -80,6 +80,10 @@
  - Added Tx status every 10 Tx
  - Added counter for Headins, Time, Distance and Button
  
+ 19 Sep 2014
+ - Modify button pressed to send STATUS & position 
+ - If GPS not locked, only sent out STATUS 
+ 
  TODO :-
  - implement compression / decompression codes for smaller Tx packets
  - Telemetry packets
@@ -89,14 +93,12 @@
  
  - Not splitting callsign and info properly
  - Packets received from Modem is split into two serial read
- - With TFT codes, the AltSoftSerial could not get the speed and course on time with lots of checksum errors
- - 
  
 */
 
 // Needed this to prevent compile error for #defines
 
-#define VERSION "SVTrackR v0.5 " 
+#define VERSION "SVTrackR v0.7 " 
 
 
 #if 1
@@ -183,8 +185,8 @@ const byte buzzerPin = 4;
 const byte ledPin = 13;
 
 // Detect for RF signal
-byte rfSignal = 0;
-byte missedPackets = 0;
+// byte rfSignal = 0;
+// byte missedPackets = 0;
 
 unsigned int txCounter = 0;
 unsigned long txTimer = 0;
@@ -193,6 +195,7 @@ unsigned long txInterval = 80000L;  // Initial 80 secs internal
 
 int lastCourse = 0;
 byte lastSpeed = 0;
+byte buttonPressed = 0;
 
 static unsigned int Hd,Ti,Di,Bn = 0;
 
@@ -223,11 +226,22 @@ void setup()
   lcd.begin(20,4);
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print(VERSION); 
-  // This is for buzzer, uncomment below for louder buzzer
-  // pinMode(buzzerPin, OUTPUT);
-  // LED pin on 13, only enable for non-SPI TFT
+  lcd.print(VERSION);
+  // Insert GPS Simulator codes if defined 
+  #ifdef GPSSIM     
+    lcd.setCursor(0,3);
+    lcd.print("GPS Sim begin"); 
+    delay(1000);
+    lcd.clear();
+  #endif
 #endif  
+
+
+#ifndef LCD20x4  
+  // Buzzer uses pin 4, conflicting with 20x4 LCD pins
+  pinMode(buzzerPin, OUTPUT);
+#endif
+
 
 #ifdef TFT22
   tft.begin();    
@@ -241,6 +255,7 @@ void setup()
 #endif
 
 #ifndef TFT
+  // LED pin on 13, only enable for non-SPI TFT
   pinMode(ledPin,OUTPUT);
 #endif
 
@@ -269,14 +284,7 @@ void setup()
   
   txTimer = millis();
 
-#ifdef LCD20x4   
-  #ifdef GPSSIM     
-    lcd.setCursor(0,3);
-    lcd.print("GPS Sim begin"); 
-    delay(1000);
-    lcd.clear();
-  #endif
-#endif
+
 
  
 } // end setup()
@@ -530,7 +538,7 @@ void loop()
     if ( lastTx > 5000 ) {
         // Check for heading more than 25 degrees
         if ( headingDelta < -25 || headingDelta >  25 ) {
-            Hd++;
+              Hd++;
 #ifdef DEBUG                
             debug.println(F("*** Heading Change "));
 #endif            
@@ -549,7 +557,7 @@ void loop()
     if ( lastTx > 10000 ) {
          // check of the last Tx distance is more than 600m
          if ( lastTxdistance > 600 ) {  
-            Di++;
+              Di++;
 #ifdef DEBUG                     
             debug.println();
             debug.println(F("*** Distance > 600m ")); 
@@ -572,7 +580,7 @@ void loop()
         // Trigger Tx Tracker when Tx interval is reach 
         // Will not Tx if stationary bcos speed < 5 and lastTxDistance < 20
         if ( lastTxdistance > 20 ) {
-            Ti++;
+              Ti++;
 #ifdef DEBUG                    
                    debug.println();
                    debug.print(F("lastTx:"));
@@ -599,7 +607,8 @@ void loop()
     } // Endif check for satellites
     // Check if the analog0 is plugged into 5V and more than 10 secs
     if ( analogRead(0) > 700 && (lastTx > 10000) ) {
-        Bn++;
+          Bn++;
+          buttonPressed = 1;
 #ifdef DEBUG                
                 debug.println();             
                 debug.println(analogRead(0));
@@ -738,15 +747,45 @@ void TxtoRadio() {
        digitalWrite(buzzerPin,HIGH);  
 
        // Only send status/version every 10 packets to save packet size  
-       if ( (txCounter % 10) == 0 ) {
+       if ( ( txCounter % 10 == 0 ) || buttonPressed ) {
+
+          float base = TinyGPSPlus::distanceBetween(
+          gps.location.lat(),
+          gps.location.lng(),
+          HOME_LAT, 
+          HOME_LON)/1000;  
+          
+          float r1 = TinyGPSPlus::distanceBetween(
+          gps.location.lat(),
+          gps.location.lng(),
+          RKK_LAT, 
+          RKK_LON)/1000;            
+
+          float r2 = TinyGPSPlus::distanceBetween(
+          gps.location.lat(),
+          gps.location.lng(),
+          RDG_LAT, 
+          RDG_LON)/1000; 
+          
+          float r3 = TinyGPSPlus::distanceBetween(
+          gps.location.lat(),
+          gps.location.lng(),
+          RTB_LAT, 
+          RTB_LON)/1000; 
+
          cmtOut.concat("!>");                
          cmtOut.concat(VERSION);       
          cmtOut.concat(Volt);
          cmtOut.concat("V S:");
          cmtOut.concat(gps.satellites.value());
-         cmtOut.concat(" M:");         
-         cmtOut.concat(Mem);
-
+         cmtOut.concat(" B:");         
+         cmtOut.concat(base);
+         cmtOut.concat("/");         
+         cmtOut.concat(r1);
+         cmtOut.concat("/");         
+         cmtOut.concat(r2);
+         cmtOut.concat("/");         
+         cmtOut.concat(r3);         
 #ifdef DEBUG          
        debug.print("TX STR: ");
        debug.print(cmtOut);  
@@ -756,6 +795,7 @@ void TxtoRadio() {
         delay(1000);   
         cmtOut = ""; 
        } 
+       
        
        latDegMin = convertDegMin(lastTxLat);
        lngDegMin = convertDegMin(lastTxLng);
@@ -788,17 +828,24 @@ void TxtoRadio() {
        debug.print(cmtOut);  
        debug.println(); 
 #endif         
+       
+       // This condition is ONLY for button pressed ( do not sent out position if not locked )
+       if ( gps.satellites.value() > 3 ) {
+
        Serial.println(latOut);
        delay(200);
        Serial.println(lngOut);
        delay(200);
        Serial.println(cmtOut);
        delay(200);
+
+       }
        
        digitalWrite(buzzerPin,LOW);     
        // Reset the txTimer & Tx internal   
     
        txInterval = 80000;
+       buttonPressed = 0;
        lastTx = 0;
 #ifdef DEBUG               
        debug.print(F("FreeRAM:"));
@@ -909,7 +956,7 @@ void decodeAPRS() {
 //         debug.print(c);
 //#endif         
          decoded.concat(c); 
-         rfSignal = 1;
+         // rfSignal = 1;
       }   
 
 #ifdef DEBUG   

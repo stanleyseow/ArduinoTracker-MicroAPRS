@@ -1,5 +1,5 @@
 // config file to defines callsign, ssid, symbols and home location
-#define MYCALL "9W2SVT"
+#define MYCALL "NOCALL"
 #define CALL_SSID 8
 // Refer to http://wa8lmf.net/aprs/APRS_symbols.htm
 #define SYMBOL_CHAR 'n'         // Blue Dot
