@@ -84,21 +84,22 @@
  - Modify button pressed to send STATUS & position 
  - If GPS not locked, only sent out STATUS 
  
+ 24 Sep 2014
+ - Added support for BD GPS by modifying the tinyGPSPlus 
+ 
  TODO :-
  - implement compression / decompression codes for smaller Tx packets
  - Telemetry packets
- - Split comments and location for smaller Tx packets
  
  Bugs :-
  
- - Not splitting callsign and info properly
- - Packets received from Modem is split into two serial read
+ - Serial issues :- Packets received from Modem is split into two serial read
  
 */
 
 // Needed this to prevent compile error for #defines
 
-#define VERSION "SVTrackR v0.7 " 
+#define VERSION "SVTrackR v0.8 " 
 
 
 #if 1
@@ -110,14 +111,39 @@ __asm volatile ("nop");
 #include "config.h"
 #endif
  
+// GPS libraries
+// Choose between GPS and BD
+//#include <TinyGPS++BD.h>
+#include <TinyGPS++.h>
+
+
+TinyGPSPlus gps;
+
+ 
+// The section below configure various support hardware like 20x4 LCD, 2.2" TFT (3.3V), debugging mode 
+// and GPS simulation mode (with 20x4 LCD)
+//
 // Turn on/off 20x4 LCD
 #undef LCD20x4
-// Turn on/off debug
+
+// Turn on/off debug, on by default on pin 2,3
 #define DEBUG
-// Turn on/off 2.2" TFT
+
+// Turn on/off 2.2" TFT, off by default on SPI pins
 #undef TFT22
+
 // Turn on/off GPS simulation
 #undef GPSSIM
+
+// Turn on/off 0.96" I2C 2 colour OLED
+#undef OLED96
+
+
+#ifdef OLED96
+#include <U8glib.h>
+U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NO_ACK);
+extern uint8_t I2C_SLA;
+#endif
 
 #ifdef TFT22
 #include <SPI.h>
@@ -139,13 +165,6 @@ Adafruit_ILI9340 tft = Adafruit_ILI9340(_cs, _dc, _rst);
   #endif
 #endif
 
-// Only needed for ATmega328
-#if defined (__AVR_ATmega328P__) 
-#include <AltSoftSerial.h>
-#endif 
-
-#include <TinyGPS++.h>
-
 #ifdef LCD20x4
 // My wiring for LCD on breadboard
 #include <LiquidCrystal.h>
@@ -153,16 +172,15 @@ LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
 #endif
 
 
-// Altdebug default on UNO is 8-Rx, 9-Tx
-//AltSoftSerial ss;
+// AltSoftSerial default on UNO is 8,9 (Rx,Tx)
 #if defined (__AVR_ATmega328P__) 
+#include <AltSoftSerial.h>
   AltSoftSerial ss(8,9);
 #else
-// Map hw Serial2 to ss for gps port
+// Map hw Serial2 to ss for gps port for other platform with hw serial
   #define ss Serial2 
 #endif
 
-TinyGPSPlus gps;
 
 #ifdef DEBUG
 // Connect to GPS module on pin 9, 10 ( Rx, Tx )
@@ -177,8 +195,10 @@ TinyGPSPlus gps;
 // Put All global defines here
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef LCD20x4  
+// Move buzzerPin to pin 10 
 const byte buzzerPin = 10;
 #else
+// default was on pin 4 on the PCB
 const byte buzzerPin = 4;
 #endif
 
@@ -205,14 +225,21 @@ float lastTxLat = HOME_LAT;
 float lastTxLng = HOME_LON;
 float lastTxdistance, homeDistance = 0.0;
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
+// Used in the future for sending messages, commands to the tracker
 const unsigned int MAX_DEBUG_INPUT = 30;
+
+//////////////////////////////////////////////////////////////////////////////
+// setup()
+//////////////////////////////////////////////////////////////////////////////
 
 void setup()
 {
   
+#ifdef OLED96
+  I2C_SLA = 0x078;
+
+#endif
+
   
 #if defined(__arm__) && defined(TEENSYDUINO)
 // This is for reading the internal reference voltage
@@ -260,12 +287,17 @@ void setup()
 #endif
 
 
-  
-  Serial.begin(9600);
+// Main serial talks to the MicroModem directly
+Serial.begin(9600);
+
+// ss talks to the GPS receiver at 9600 
+ss.begin(9600);
+
+
 #ifdef DEBUG
   debug.begin(9600);
 #endif
-  ss.begin(9600);
+
 
 #ifdef DEBUG
   debug.flush();
@@ -284,13 +316,12 @@ void setup()
   
   txTimer = millis();
 
-
-
- 
 } // end setup()
 
+//////////////////////////////////////////////////////////////////////////////
+// loop()
+//////////////////////////////////////////////////////////////////////////////
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
     // Speed in km/h
@@ -302,9 +333,11 @@ void loop()
     
 #ifdef DEBUG    
     // Send commands from debug serial into hw Serial char by char 
+
 #if defined (__AVR_ATmega328P__)    
     debug.listen();
 #endif  
+
     if ( debug.available() > 0  ) {
           processIncomingDebug(debug.read());
     }
@@ -631,7 +664,7 @@ void loop()
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void serialEvent() {
-// Disable Serial Decode  
+// Only enable input APRS decode if display is attached  
 #ifdef LCD20x4
     decodeAPRS(); 
 #endif    
@@ -758,20 +791,20 @@ void TxtoRadio() {
           float r1 = TinyGPSPlus::distanceBetween(
           gps.location.lat(),
           gps.location.lng(),
-          RKK_LAT, 
-          RKK_LON)/1000;            
+          R1_LAT, 
+          R1_LON)/1000;            
 
           float r2 = TinyGPSPlus::distanceBetween(
           gps.location.lat(),
           gps.location.lng(),
-          RDG_LAT, 
-          RDG_LON)/1000; 
+          R2_LAT, 
+          R2_LON)/1000; 
           
           float r3 = TinyGPSPlus::distanceBetween(
           gps.location.lat(),
           gps.location.lng(),
-          RTB_LAT, 
-          RTB_LON)/1000; 
+          R3_LAT, 
+          R3_LON)/1000; 
 
          cmtOut.concat("!>");                
          cmtOut.concat(VERSION);       
@@ -912,11 +945,12 @@ void configModem() {
   lcd.print("Configuring modem");
 #endif                            
 
-
-  Serial.print("c");  // Set SRC Callsign
-  Serial.println(MYCALL);  // Set SRC Callsign
+  Serial.println("dAPZSVT");  // Set DST Callsign
   delay(200);
-  Serial.print("sc");      // Set SRC SSID
+  Serial.print("c");          // Set SRC Callsign
+  Serial.println(MYCALL);     // Set SRC Callsign
+  delay(200);
+  Serial.print("sc");         // Set SRC SSID
   Serial.println(CALL_SSID);      // Set SRC SSID
   delay(200);
   Serial.println("pd0");      // Disable printing DST 
