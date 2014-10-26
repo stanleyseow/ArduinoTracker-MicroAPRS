@@ -1,3 +1,6 @@
+// Current Version
+#define VERSION "SVTrackR v0.82 " 
+
 /*
 
  SVTrackR ( Arduino APRS Tracker )
@@ -87,6 +90,14 @@
  24 Sep 2014
  - Added support for BD GPS by modifying the tinyGPSPlus 
  
+ 15 Oct 2014
+ - Added setting PATH1 & PATH2 to the modem 
+ 
+ 24 Oct 2014 
+ - Added blinking LED 13 during configuring the modem and a beep when completed
+ - Minor changes in Status codes
+ 
+ 
  TODO :-
  - implement compression / decompression codes for smaller Tx packets
  - Telemetry packets
@@ -99,7 +110,7 @@
 
 // Needed this to prevent compile error for #defines
 
-#define VERSION "SVTrackR v0.8 " 
+
 
 
 #if 1
@@ -141,8 +152,7 @@ TinyGPSPlus gps;
 
 #ifdef OLED96
 #include <U8glib.h>
-U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NO_ACK);
-extern uint8_t I2C_SLA;
+U8GLIB_SSD1306_ADAFRUIT_128X64 u8g(10, 7);
 #endif
 
 #ifdef TFT22
@@ -685,28 +695,6 @@ void TxtoRadio() {
   
      lastTxLat = gps.location.lat();
      lastTxLng = gps.location.lng();
-
-     /*
-     // Check for Rx APRS packets from Modem
-     if ( !rfSignal ) {
-          missedPackets++;
-#ifdef DEBUG                 
-       debug.print("missedPackets:");
-       debug.println(missedPackets);
-#endif       
-     }
-     // Reset the rfSignal flag
-     rfSignal = 0;
-     
-     if ( missedPackets > 5 ) {
-      
-      // Store all the Tx packets into an array with timestamped
-      //  
-     
-      missedPackets = 0;  // Reset the counter
-     }
-     else 
-     */
      
      if ( lastTx >= 5000 ) { // This prevent ANY condition to Tx below 5 secs
 #ifdef DEBUG                 
@@ -776,8 +764,7 @@ void TxtoRadio() {
        debug.print((float)lastTx/1000); 
        debug.println(" sec");   
 #endif             
-       // Turn on the buzzer
-       digitalWrite(buzzerPin,HIGH);  
+ 
 
        // Only send status/version every 10 packets to save packet size  
        if ( ( txCounter % 10 == 0 ) || buttonPressed ) {
@@ -812,24 +799,28 @@ void TxtoRadio() {
          cmtOut.concat("V S:");
          cmtOut.concat(gps.satellites.value());
          cmtOut.concat(" B:");         
-         cmtOut.concat(base);
-         cmtOut.concat("/");         
-         cmtOut.concat(r1);
-         cmtOut.concat("/");         
-         cmtOut.concat(r2);
-         cmtOut.concat("/");         
-         cmtOut.concat(r3);         
+         if ( gps.satellites.value() > 3 ) {
+             cmtOut.concat(base);
+         } else {
+             cmtOut.concat("0");
+         }    
+         cmtOut.concat(" U:");         
+         cmtOut.concat((float) millis()/60000);
+         cmtOut.concat(" Seq:");         
+         cmtOut.concat(txCounter);
 #ifdef DEBUG          
        debug.print("TX STR: ");
        debug.print(cmtOut);  
        debug.println(); 
-#endif               
+#endif          
+        digitalWrite(buzzerPin,HIGH);  // Turn on buzzer
         Serial.println(cmtOut);
-        delay(1000);   
+        delay(500);   
+        digitalWrite(buzzerPin,LOW);   // Turn off buzzer
+        delay(2000);   
         cmtOut = ""; 
        } 
-       
-       
+        
        latDegMin = convertDegMin(lastTxLat);
        lngDegMin = convertDegMin(lastTxLng);
 
@@ -869,14 +860,14 @@ void TxtoRadio() {
        delay(200);
        Serial.println(lngOut);
        delay(200);
+
+       digitalWrite(buzzerPin,HIGH); 
        Serial.println(cmtOut);
        delay(200);
-
+       digitalWrite(buzzerPin,LOW);     
        }
        
-       digitalWrite(buzzerPin,LOW);     
        // Reset the txTimer & Tx internal   
-    
        txInterval = 80000;
        buttonPressed = 0;
        lastTx = 0;
@@ -943,30 +934,53 @@ void configModem() {
 #ifdef LCD20x4                            
   lcd.setCursor(0,1);
   lcd.print("Configuring modem");
-#endif                            
-
-  Serial.println("dAPZSVT");  // Set DST Callsign
+#endif
+  digitalWrite(ledPin,HIGH);  
+  Serial.println("1WIDE1");  // Set PATH1 callsign
   delay(200);
+  
+  digitalWrite(ledPin,LOW);  
+  Serial.println("2WIDE2");  // Set PATH2 callsign
+  delay(200);
+  
+  digitalWrite(ledPin,HIGH);    
+  Serial.println("dAPZSVT");  // Set DST Callsign to APRSVTH
+  delay(200);
+
+  digitalWrite(ledPin,LOW);    
   Serial.print("c");          // Set SRC Callsign
   Serial.println(MYCALL);     // Set SRC Callsign
   delay(200);
+  
+  digitalWrite(ledPin,HIGH);    
   Serial.print("sc");         // Set SRC SSID
   Serial.println(CALL_SSID);      // Set SRC SSID
   delay(200);
+  
+  digitalWrite(ledPin,LOW);    
   Serial.println("pd0");      // Disable printing DST 
   delay(200);
+
+  digitalWrite(ledPin,HIGH);    
   Serial.println("pp0");      // Disable printing PATH
   delay(200);
+  
+  digitalWrite(ledPin,LOW);    
   Serial.print("ls");      // Set symbol n / Bluedot
   Serial.println(SYMBOL_CHAR);      // Set symbol n / Bluedot
   delay(200);
+
+  digitalWrite(buzzerPin,HIGH);  // Turn on buzzer
+  digitalWrite(ledPin,HIGH);    
   Serial.print("lt");      // Standard symbol 
-  Serial.println(SYMBOL_TABLE);      // Standard symbol 
+  Serial.println(SYMBOL_TABLE);      // Standard symbol   
   delay(200);
-  Serial.println("V1");      // Silent Mode ON 
+
+  digitalWrite(buzzerPin,LOW);  
+  digitalWrite(ledPin,LOW);    
+  Serial.println("V1");      
   delay(200);
-  //Serial.println("H");        // Print out the Settings
-  //Serial.println("S");        // Save config
+
   
 #ifdef LCD20x4                              
   lcd.setCursor(0,2);
