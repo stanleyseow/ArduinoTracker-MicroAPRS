@@ -8,8 +8,8 @@
 // http://andrew.hedges.name/experiments/convert_lat_long/
 // Goto aprs.fi and find your deg mm.mm ( leave the secs blank )
 // home
-const float HOME_LAT = 3.15966;
-const float HOME_LON = 101.68033;
+const float HOME_LAT = 3.159777;
+const float HOME_LON = 101.69903;
 // R1 9M2RPN
 const float R1_LAT = 3.138833;
 const float R1_LON = 101.687833;

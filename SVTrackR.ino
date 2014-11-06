@@ -146,15 +146,6 @@ TinyGPSPlus gps;
 // Turn on/off GPS simulation
 #undef GPSSIM
 
-// Turn on/off 0.96" I2C 2 colour OLED
-#undef OLED96
-
-
-#ifdef OLED96
-#include <U8glib.h>
-U8GLIB_SSD1306_ADAFRUIT_128X64 u8g(10, 7);
-#endif
-
 #ifdef TFT22
 #include <SPI.h>
 #include <Adafruit_GFX.h>
