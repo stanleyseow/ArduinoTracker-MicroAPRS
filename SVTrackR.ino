@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v0.82 " 
+#define VERSION "SVTrackR v0.9 " 
 
 /*
 
@@ -97,6 +97,10 @@
  - Added blinking LED 13 during configuring the modem and a beep when completed
  - Minor changes in Status codes
  
+ 18 Nov 2014 ( v0.9 )
+ - Adding OLED text only display to the Tracker
+ - Moving LED to pin 6 as OLED used up SPI pins of 13,11,10,7
+ - Switch top 2 lines from gps info to tracker info ( packet rx,tx)
  
  TODO :-
  - implement compression / decompression codes for smaller Tx packets
@@ -109,10 +113,6 @@
 */
 
 // Needed this to prevent compile error for #defines
-
-
-
-
 #if 1
 __asm volatile ("nop");
 #endif
@@ -126,38 +126,19 @@ __asm volatile ("nop");
 // Choose between GPS and BD
 //#include <TinyGPS++BD.h>
 #include <TinyGPS++.h>
-
-
 TinyGPSPlus gps;
 
- 
-// The section below configure various support hardware like 20x4 LCD, 2.2" TFT (3.3V), debugging mode 
-// and GPS simulation mode (with 20x4 LCD)
-//
 // Turn on/off 20x4 LCD
 #undef LCD20x4
 
 // Turn on/off debug, on by default on pin 2,3
 #define DEBUG
 
-// Turn on/off 2.2" TFT, off by default on SPI pins
-#undef TFT22
-
 // Turn on/off GPS simulation
 #undef GPSSIM
 
-#ifdef TFT22
-#include <SPI.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_ILI9340.h>
-#define _sclk 13
-#define _miso 12
-#define _mosi 11
-#define _cs 7
-#define _dc 6
-#define _rst 5
-Adafruit_ILI9340 tft = Adafruit_ILI9340(_cs, _dc, _rst);
-#endif
+// Turn on/off 0.96" OLED
+#define OLED
 
 #ifdef DEBUG 
   #if defined(__arm__) && defined(TEENSYDUINO)
@@ -203,11 +184,28 @@ const byte buzzerPin = 10;
 const byte buzzerPin = 4;
 #endif
 
+// Defines for OLED 128x64 
+#ifdef OLED
+#include <SPI.h>
+#include <SSD1306_text.h>
+#include <stdlib.h>
+// Hardware SPI pins include D11=Data and D13=Clk
+// DO = CLK, 13
+// DI = MOSI, 11
+#define OLED_DC 7 // OLED Label DC
+#define OLED_CS 0 // OLED Not used
+#define OLED_RST 10 // OLED Label RST
+SSD1306_text oled(OLED_DC, OLED_RST, OLED_CS);
+// Move ledPin to 6
+const byte ledPin = 6;
+#else
 const byte ledPin = 13;
+#endif
 
-// Detect for RF signal
-// byte rfSignal = 0;
-// byte missedPackets = 0;
+// Varables for Packet Decode
+const unsigned int MAX_INPUT = 103;
+static unsigned int packetDecoded = 0;
+
 
 unsigned int txCounter = 0;
 unsigned long txTimer = 0;
@@ -236,9 +234,18 @@ const unsigned int MAX_DEBUG_INPUT = 30;
 void setup()
 {
   
-#ifdef OLED96
-  I2C_SLA = 0x078;
+#ifdef OLED
+    oled.init();
+    oled.clear();                 // clear screen
 
+    oled.setTextSize(1,1);        // 5x7 characters, pixel spacing = 1
+    oled.setCursor(0,0);          // move cursor to row 1, pixel column 100
+    oled.write(VERSION);
+    
+    oled.setTextSize(1,1);        // 5x7 characters, pixel spacing = 1
+    oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
+    oled.write("by APRS Studio");  
+    delay(2000);
 #endif
 
   
@@ -270,23 +277,8 @@ void setup()
   pinMode(buzzerPin, OUTPUT);
 #endif
 
-
-#ifdef TFT22
-  tft.begin();    
-  tft.setRotation(1);
-  tft.setCursor(0,0);
-  tft.setTextSize(3); 
-  tft.setTextColor(ILI9340_WHITE);  
-  tft.print("SVTrackR"); 
-  delay(1000);
-  tft.fillScreen(ILI9340_BLACK);
-#endif
-
-#ifndef TFT
   // LED pin on 13, only enable for non-SPI TFT
   pinMode(ledPin,OUTPUT);
-#endif
-
 
 // Main serial talks to the MicroModem directly
 Serial.begin(9600);
@@ -316,6 +308,12 @@ ss.begin(9600);
   configModem();
   
   txTimer = millis();
+  
+#ifdef OLED  
+  oled.clear();
+  oledLine1();
+
+#endif  
 
 } // end setup()
 
@@ -338,13 +336,9 @@ void loop()
 #if defined (__AVR_ATmega328P__)    
     debug.listen();
 #endif  
+#endif  
 
-    if ( debug.available() > 0  ) {
-          processIncomingDebug(debug.read());
-    }
-#endif    
-    
-    // Turn on listen() on GPS
+// Turn on listen() on GPS
 #if defined (__AVR_ATmega328P__)        
     ss.listen();  
 #endif    
@@ -381,95 +375,23 @@ void loop()
 
    if ( gps.time.isUpdated() ) {   
     
-   // Turn on LED 13 when Satellites more than 3  
-   // Disable when using TFT / SPI
-#ifndef TFT 
    if ( gps.satellites.value() > 3 ) {
      digitalWrite(ledPin,HIGH);  
    } else {
      digitalWrite(ledPin,LOW);     
    }
-#endif
 
-#ifdef TFT22
-      //tft.fillScreen(ILI9340_BLACK);
-      tft.setCursor(0,0);
+#ifdef OLED
+      oled.setTextSize(1,1);        // 5x7 characters, pixel spacing = 1
 
-      tft.setTextSize(3);      
-      tft.setTextColor(ILI9340_CYAN);  
-      tft.print("9W2");    
-      tft.setTextColor(ILI9340_YELLOW);   
-      tft.print("SVT");  
-      
-      tft.setTextColor(ILI9340_RED);   
-      tft.print("APRS");  
-      
-      tft.setTextColor(ILI9340_GREEN);   
-      tft.println("TrackR");  
+  if ( gps.time.second() % 10 == 0 ) {
+      oledLine2();
+  } else if ( gps.time.second() % 5 == 0 ) {
+      oledLine1();
+  } 
+  
 
-      tft.setCursor(0,22);
-      tft.setTextSize(2);
-      tft.setTextColor(ILI9340_WHITE);  
-      tft.print("Date:");
-      tft.setTextColor(ILI9340_YELLOW);
-      tft.print(gps.date.value());
-      tft.setTextColor(ILI9340_WHITE);
-      tft.print(" Time:");
-      tft.setTextColor(ILI9340_YELLOW);
-      tft.println(gps.time.value());
-      
-      tft.setCursor(0,32);
-      tft.setTextSize(3);
-      tft.setTextColor(ILI9340_WHITE);
-      tft.print("Lat:");
-      tft.setTextColor(ILI9340_GREEN);  
-      tft.println(gps.location.lat(),5);
 
-      tft.setCursor(0,52);      
-      tft.setTextColor(ILI9340_WHITE);     
-      tft.print("Lng:");
-      tft.setTextColor(ILI9340_GREEN);  
-      tft.println(gps.location.lng(),5);
-
-      tft.setCursor(0,100);
-      tft.setTextSize(2);      
-      tft.setTextColor(ILI9340_WHITE);  
-      tft.print("Sats:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.print(gps.satellites.value());
-      
-      tft.setTextColor(ILI9340_WHITE); 
-      tft.print(" HDOP:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.print(gps.hdop.value());
-      
-      tft.setTextColor(ILI9340_WHITE); 
-      tft.print(" Alt:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.println((int)gps.altitude.meters());
-
-      tft.setCursor(0,100);
-      tft.setTextSize(2);      
-      tft.setTextColor(ILI9340_WHITE); 
-      tft.print("Speed:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.print(gps.speed.kmph());
-
-      tft.setTextColor(ILI9340_WHITE); 
-      tft.print(" Deg:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.println(gps.course.deg());
-      
-      tft.setTextSize(1);      
-      tft.setTextColor(ILI9340_WHITE); 
-      tft.print("Passed:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.print(gps.passedChecksum()); 
-
-      tft.setTextColor(ILI9340_WHITE); 
-      tft.print(" Failed:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.println(gps.failedChecksum());       
 #endif
 
 #ifdef LCD20x4
@@ -540,22 +462,7 @@ void loop()
        } // endif
       
    }  // endof gps.time.isUpdated()
-     
-
-/*    
-///////////////// Triggered by course updates /////////////////////// 
-     
-     
-    if ( gps.course.isUpdated() ) {
-        // Get headings and heading delta
-        currentHeading = (int) gps.course.deg();
-        if ( currentHeading >= 180 ) { currentHeading = currentHeading-180; }
-      
-        headingDelta = (int) ( previousHeading - currentHeading ) % 360;     
-
-    } // endof gps.course.isUpdated()
-*/
-          
+               
  ////////////////////////////////////////////////////////////////////////////////////
  // Check for when to Tx packet
  ////////////////////////////////////////////////////////////////////////////////////
@@ -662,17 +569,75 @@ void loop()
      
 } // end loop()
 
+
+// Functions for OLED
+#ifdef OLED
+void oledLine1() {
+  
+    oled.setCursor(0,0);
+    oled.write("                     "); // Clear the old line, 21 spaces
+    oled.setCursor(1,0);
+    oled.write("                     "); // Clear the old line, 21 spaces
+    oled.setCursor(0,0);   
+    oled.print('0');
+    oled.print(convertDegMin(gps.location.lat()),2);
+    oled.print('N');
+    oled.print('/');    
+    oled.print(convertDegMin(gps.location.lng()),2);
+    oled.print('E'); 
+
+    oled.setCursor(0,115);
+    oled.print(gps.satellites.value());
+
+    oled.setCursor(1,0);
+    oled.print("S:");   
+    //oled.print("000"); 
+    oled.print((unsigned int)gps.speed.kmph());  
+    oled.print(" C:");
+    //oled.print("000"); 
+    oled.print((unsigned int)gps.course.deg());  
+    oled.print(" A:");
+    //oled.print("0000"); 
+    oled.print((unsigned int)gps.altitude.meters());
+} 
+
+void oledLine2() {    
+    oled.setCursor(0,0);
+    oled.write("                     "); // Clear the old line, 21 spaces
+    oled.setCursor(1,0);
+    oled.write("                     "); // Clear the old line, 21 spaces
+    oled.setCursor(0,0);   
+    oled.print("Rx:");
+    oled.print(packetDecoded);  
+    oled.print(" Tx:");
+    oled.print(txCounter);
+
+    oled.setCursor(1,0);       
+    oled.print("H:");
+    oled.print(Hd);
+    oled.print(" T:");
+    oled.print(Ti);
+    oled.print(" D:");
+    oled.print(Di);
+    oled.print(" B:");
+    oled.print(Bn);  
+}
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void serialEvent() {
-// Only enable input APRS decode if display is attached  
-#ifdef LCD20x4
-    decodeAPRS(); 
-#endif    
+  
+#ifdef DEBUG            
+  debug.println("Entering serialEvent...");
+#endif
+
+  while ( Serial.available() > 0) {
+    processIncomingByte( Serial.read() );
+  }
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-//  Function to Tx to Radio
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -737,11 +702,11 @@ void TxtoRadio() {
        debug.print(" HDOP:");
        debug.print(gps.hdop.value());
        debug.print(" km/h:");           
-       debug.print((int) gps.speed.kmph());
+       debug.print((unsigned int) gps.speed.kmph());
        debug.print(" Head:");
-       debug.print((int) gps.course.deg());          
+       debug.print((unsigned int) gps.course.deg());          
        debug.print(" Alt:");
-       debug.print(gps.altitude.meters());
+       debug.print((unsigned int) gps.altitude.meters());
        debug.print("m");
        debug.println();
 
@@ -806,7 +771,7 @@ void TxtoRadio() {
 #endif          
         digitalWrite(buzzerPin,HIGH);  // Turn on buzzer
         Serial.println(cmtOut);
-        delay(500);   
+        delay(200);   
         digitalWrite(buzzerPin,LOW);   // Turn off buzzer
         delay(2000);   
         cmtOut = ""; 
@@ -878,39 +843,119 @@ void TxtoRadio() {
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void processDebugData(const char * data) {
-  // Send commands to modem
-  Serial.println(data);
-}  // end of processDebugData
-  
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-  
-
-void processIncomingDebug(const byte inByte) {
-
-  static char input_line [MAX_DEBUG_INPUT];
+void processIncomingByte (const byte inByte)
+  {
+  static char input_line [MAX_INPUT];
   static unsigned int input_pos = 0;
 
   switch (inByte)
     {
-    case '\n':   // end of text
-      input_line[input_pos] = 0;  // terminating null byte 
-      // terminator reached! Process the data
-      processDebugData(input_line);
-      // reset buffer for next time
+
+    case '\n':   
+      input_line [input_pos] = 0;  // terminating null byte
+      if ( input_pos > 0 ) {  // if not zero bytes
+      process_data (input_line);
+      }
       input_pos = 0;  
       break;
-    case '\r':   // discard carriage return
+
+    case '\r':   
+      //input_line [input_pos] = 0;  // terminating null byte
+      //process_data (input_line);
+      //input_pos = 0;      
       break;
+
     default:
       // keep adding if not full ... allow for terminating null byte
-      if (input_pos < (MAX_DEBUG_INPUT - 1))
+      if (input_pos < (MAX_INPUT - 1))
         input_line [input_pos++] = inByte;
       break;
+
     }  // end of switch
    
-} // endof processIncomingByte  
+} // end of processIncomingByte
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void process_data (char * input){
+
+  String temp, temp2 = "";
+  byte callIndex,callIndex2, dataIndex = 0;
+  static char callsign[12]="";
+  static char data[MAX_INPUT-13]="";
+  static boolean nextLine = 0;
+ 
+#ifdef DEBUG            
+  debug.print("INPUT (");
+  debug.print(strlen(input));
+  debug.print("):");
+  debug.println(input);
+#endif
+
+  temp = input;  
+  callIndex = temp.indexOf("[");
+  callIndex2 = temp.indexOf("]");
+  temp2 = temp.substring(callIndex+1,callIndex2);  
+  temp2.toCharArray(callsign,temp2.length()+1);
+ 
+  temp2 = "";
+  dataIndex = temp.indexOf("DATA:");
+  temp2 = temp.substring(dataIndex+6,temp.length());
+  temp2.toCharArray(data,temp2.length()+1);
+
+  if ( strlen(callsign) > 5 ) {  
+        packetDecoded++;
+  }
+
+#ifdef DEBUG            
   
+  debug.print("Callsign:");
+  debug.println(callsign); 
+  debug.print("Data (");
+  debug.print(strlen(data));
+  debug.print("):");
+  
+  debug.println(data);  
+#endif
+
+#ifdef OLED
+  if ( !nextLine ) {
+    oledLine2();
+    oled.setCursor(2,0);
+    oled.write("            ");
+    oled.setCursor(2,0);
+    oled.print(callsign);
+  
+    oled.setCursor(2,65);
+    for ( int i=0;i<53;i++) {
+      oled.write(' ');
+    }
+    oled.setCursor(2,65);  
+    data[53] = 0;  // Truncate the data to 52 chars
+    oled.print(data);
+  
+  } else {
+    oledLine2();
+    oled.setCursor(5,0);
+    oled.write("            ");
+    oled.setCursor(5,0);
+    oled.print(callsign);
+
+    oled.setCursor(5,64);  
+    for ( int i=0;i<53;i++) {
+      oled.write(' ');
+    }
+    oled.setCursor(5,64);
+    data[53] = 0;  // Truncate the data to 52 chars
+    oled.print(data);  
+  
+  }
+  // Toggle the nextLine 
+  nextLine ^= 1 << 1;  
+#endif
+  
+}  // end of process_data
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -921,7 +966,13 @@ void configModem() {
 // pd0 - turn off DST display
 // pp0 - turn on PATH display
 
-
+#ifdef OLED
+    oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
+    oled.write("                      "); // Clear the old line, 21 spaces
+    oled.setCursor(1,0);
+    oled.write("Config modem...");  
+#endif    
+    
 #ifdef LCD20x4                            
   lcd.setCursor(0,1);
   lcd.print("Configuring modem");
@@ -972,84 +1023,21 @@ void configModem() {
   Serial.println("V1");      
   delay(200);
 
+#ifdef OLED
+    oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
+    oled.write("                      "); // Clear the old line, 21 spaces
+    oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
+    oled.print("Config done...");  
+    delay(500);
+#endif  
   
-#ifdef LCD20x4                              
-  lcd.setCursor(0,2);
+#ifdef LCD20x4 
+
+  lcd.setCursor(1,0);
   lcd.print("Done................");
-  delay(500); 
+  delay(500);
 #endif                             
   
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void decodeAPRS() {
-      // Dump whatever on the Serial to LCD line 1
-      char c;
-      String decoded="";
-      int callIndex,callIndex2, dataIndex = 0;
-
-      while ( Serial.available() > 0 ) {
-         c = Serial.read();
-//#ifdef DEBUG         
-//         debug.print(c);
-//#endif         
-         decoded.concat(c); 
-         // rfSignal = 1;
-      }   
-
-#ifdef DEBUG   
-      debug.print("Decoded Packets:");
-      debug.println(decoded);
-#endif   
-      callIndex = decoded.indexOf("[");
-      callIndex2 = decoded.indexOf("]");
-      String callsign = decoded.substring(callIndex+1,callIndex2);
-      
-      dataIndex = decoded.indexOf("DATA:");
-      String data = decoded.substring(dataIndex+6,decoded.length());
-
-      String line1 = data.substring(0,20);
-      String line2 = data.substring(21,40);
-      
-#ifdef LCD20x4                                  
-      lcd.setCursor(0,1);
-      lcd.print("                    ");
-      lcd.setCursor(0,1);
-      lcd.print(callsign);
-      lcd.setCursor(0,2);
-      lcd.print("                    ");
-      lcd.setCursor(0,2);      
-      lcd.print(line1);
-      lcd.setCursor(0,3);
-      lcd.print("                    ");
-      lcd.setCursor(0,3);
-      lcd.print(line2);
-#endif       
-
-#ifdef DEBUG         
-         debug.print(F("Callsign:"));
-         debug.println(callsign);
-         debug.print(F("Data:"));
-         debug.println(data);
-#endif  
-
-#ifdef TFT22
-      tft.drawLine(0,199,319,199, ILI9340_WHITE);
-      tft.setCursor(0,200);
-      tft.setTextSize(2);      
-      tft.setTextColor(ILI9340_GREEN);  
-      tft.print("Callsign:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.print(callsign);
-      
-      tft.setTextColor(ILI9340_WHITE);  
-      tft.print(" Data:");
-      tft.setTextColor(ILI9340_CYAN);
-      tft.println(data);   
-  
-#endif
-
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1087,6 +1075,8 @@ long readVcc() {
   return result;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
 String padding( int number, byte width ) {
   String result;
   
@@ -1101,6 +1091,7 @@ String padding( int number, byte width ) {
   return result;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 int freeRam() {
 #if defined(__arm__) && defined(TEENSYDUINO)
@@ -1112,4 +1103,6 @@ int freeRam() {
   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
 #endif  
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
 
