@@ -15,11 +15,11 @@ Arduino TrackR interface for MicroAPRS firmware
  
  * AltSoftSerial ( https://www.pjrc.com/teensy/td_libs_AltSoftSerial.html )
  * tinyGPS++ ( http://arduiniana.org/libraries/tinygpsplus/ )
- 
+ * SSD1306 OLED Text only ( https://github.com/stanleyseow/ArduinoTracker-MicroAPRS/tree/master/libraries/SSD1306_text )
  
  Instructions :-
  
- Download the MicroAPRS compiled Modem.hex from https://github.com/markqvist/MicroAPRS/tree/master/images 
+ Download the MicroAPRS compiled Modem.hex from https://github.com/markqvist/MicroAPRS/
  
  As this hex is not compiled from the Arduino IDE, you need to manually upload this hex to the Arduino with a bootloader using avrdude or Xloader.
  
@@ -32,8 +32,6 @@ Xloader to load this hex image to the Arduino / Mini Pro :-
     5. Select the COM port and press Upload
     
 ![SVTrackR with OLED](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrackROLED.jpg)
-
-![MicroAPRS Modem](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/MicroModem.jpg)
 
 ![SVTrackR](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrackR.jpg)
 
