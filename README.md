@@ -1,13 +1,13 @@
 Arduino SVTrackR ( 9W2SVT )
 ========================
 
- - Written by Stanley Seow ( 9W2SVT )
+ - Written by Stanley Seow ( 9W2SVT / KG7OOY )
  - e-mail : stanleyseow@gmail.com
  
  *** Pls refer to the top of the source code for version history and updated instructions.
  
 
-Arduino TrackR interface for MicroAPRS firmware
+Arduino APRS Tracker interface for MicroAPRS firmware
 
  This sketch configure the MicroAPRS (the modem) for the proper callsign and ssid and read/write data coming in from the MicroAPRS (another Arduino/atmega328P with bootloader) via Serial port
 
@@ -33,7 +33,7 @@ Xloader to load this hex image to the Arduino / Mini Pro :-
     
 ![SVTrackR with OLED](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrackROLED.jpg)
 
-![SVTrackR](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrackR.jpg)
+![SVTrackR](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrackR2.jpg)
 
 
 
