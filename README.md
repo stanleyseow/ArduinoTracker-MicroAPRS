@@ -1,13 +1,11 @@
-Arduino SVTrackR ( 9W2SVT )
-========================
+Arduino APRS SVTrackR
+=====================
 
  - Written by Stanley Seow ( 9W2SVT / KG7OOY )
  - e-mail : stanleyseow@gmail.com
  
  *** Pls refer to the top of the source code for version history and updated instructions.
  
-
-Arduino APRS Tracker interface for MicroAPRS firmware
 
  This sketch configure the MicroAPRS (the modem) for the proper callsign and ssid and read/write data coming in from the MicroAPRS (another Arduino/atmega328P with bootloader) via Serial port
 
@@ -16,6 +14,7 @@ Arduino APRS Tracker interface for MicroAPRS firmware
  * AltSoftSerial ( https://www.pjrc.com/teensy/td_libs_AltSoftSerial.html )
  * tinyGPS++ ( http://arduiniana.org/libraries/tinygpsplus/ )
  * SSD1306 OLED Text only ( https://github.com/stanleyseow/ArduinoTracker-MicroAPRS/tree/master/libraries/SSD1306_text )
+ * MicroAPRS libs 
  
  Instructions :-
  

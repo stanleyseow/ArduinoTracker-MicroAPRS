@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v0.9 " 
+#define VERSION "SVTrackR v1.0 " 
 
 /*
 
@@ -25,22 +25,7 @@
  Date : 03 July 2014
  Written by Stanley Seow
  e-mail : stanleyseow@gmail.com
- Version : 0.2
- 
- Pls flash the modem Arduino with http://unsigned.io/microaprs/ with USBtinyISP
- This firmware does NOT have an Arduino bootloader and run pure AVR codes. Once you
- have done this, follow the instructions on the above URL on how to set it up.
- We will call this Arduino/atmega328 as the "modem". 
- 
- To use with Arduino Tracker (this sketch), connect the Modem Tx(pin1) to Arduino Rx(pin8) and 
- Modem Rx(pin0) to Arduino Rx(pin9).
- 
- I had dropped bytes when using Softwaredebug for the MicroAPRS modem and therefore
- I'm using AltSoftdebug instead. The GPS module is still on Softwaredebug and 
- the hardware debug is still used for debug Monitor.
- 
- ***** To use this sketch, pls change your CALLSIGN and SSID below under configModem().
- 
+  
  History :-
  03 July 2014 :-
  - Initial released
@@ -102,14 +87,10 @@
  - Moving LED to pin 6 as OLED used up SPI pins of 13,11,10,7
  - Switch top 2 lines from gps info to tracker info ( packet rx,tx)
  
- TODO :-
- - implement compression / decompression codes for smaller Tx packets
- - Telemetry packets
- 
- Bugs :-
- 
- - Serial issues :- Packets received from Modem is split into two serial read
- 
+ 1 Dec 2014 ( v1.0 )
+ - Added mic-e/compressed packets decoding from MicroAPRS libs
+ - Ability to display received messages
+  
 */
 
 // Needed this to prevent compile error for #defines
@@ -127,15 +108,26 @@ __asm volatile ("nop");
 //#include <TinyGPS++BD.h>
 #include <TinyGPS++.h>
 TinyGPSPlus gps;
+// The packet decoding libs
+#include <MicroAPRS.h>
 
-// Turn on/off 20x4 LCD
-#undef LCD20x4
+MicroAPRS microaprs = MicroAPRS(&Serial);
+// APRS Buffers
+#define BUFLEN (260) //original 260
+char packet[BUFLEN];
+int buflen = 0;
+bool showmsg, showstation;
+
+float latitude = 0.0;
+float longitude = 0.0;
+float wayPointLatitude, wayPointLongitude;
+float latitudeRadians, wayPointLatitudeRadians, longitudeRadians, wayPointLongitudeRadians;
+float distanceToWaypoint, bearing, deltaLatitudeRadians, deltaLongitudeRadians;
+const float pi = 3.14159265;
+const int radiusOfEarth = 6371; // in km
 
 // Turn on/off debug, on by default on pin 2,3
-#define DEBUG
-
-// Turn on/off GPS simulation
-#undef GPSSIM
+#undef DEBUG
 
 // Turn on/off 0.96" OLED
 #define OLED
@@ -145,12 +137,6 @@ TinyGPSPlus gps;
   #else
   #include <SoftwareSerial.h>
   #endif
-#endif
-
-#ifdef LCD20x4
-// My wiring for LCD on breadboard
-#include <LiquidCrystal.h>
-LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
 #endif
 
 
@@ -176,13 +162,8 @@ LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Put All global defines here
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#ifdef LCD20x4  
-// Move buzzerPin to pin 10 
-const byte buzzerPin = 10;
-#else
-// default was on pin 4 on the PCB
+
 const byte buzzerPin = 4;
-#endif
 
 // Defines for OLED 128x64 
 #ifdef OLED
@@ -206,10 +187,11 @@ const byte ledPin = 13;
 const unsigned int MAX_INPUT = 103;
 static unsigned int packetDecoded = 0;
 
-
+unsigned int mCounter = 0;
 unsigned int txCounter = 0;
 unsigned long txTimer = 0;
 unsigned long lastTx = 0;
+unsigned long lastRx = 0;
 unsigned long txInterval = 80000L;  // Initial 80 secs internal
 
 int lastCourse = 0;
@@ -222,7 +204,7 @@ int previousHeading, currentHeading = 0;
 // Initial lat/lng pos, change to your base station coordnates
 float lastTxLat = HOME_LAT;
 float lastTxLng = HOME_LON;
-float lastTxdistance, homeDistance = 0.0;
+float lastTxdistance, homeDistance, base = 0.0;
 
 // Used in the future for sending messages, commands to the tracker
 const unsigned int MAX_DEBUG_INPUT = 30;
@@ -255,27 +237,11 @@ void setup()
   analogReadResolution(12);
   analogReadAveraging(32);
 #endif
-  
-#ifdef LCD20x4  
-  // LCD format is Col,Row for 20x4 LCD
-  lcd.begin(20,4);
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print(VERSION);
-  // Insert GPS Simulator codes if defined 
-  #ifdef GPSSIM     
-    lcd.setCursor(0,3);
-    lcd.print("GPS Sim begin"); 
-    delay(1000);
-    lcd.clear();
-  #endif
-#endif  
 
 
-#ifndef LCD20x4  
-  // Buzzer uses pin 4, conflicting with 20x4 LCD pins
+
+// Buzzer uses pin 4
   pinMode(buzzerPin, OUTPUT);
-#endif
 
   // LED pin on 13, only enable for non-SPI TFT
   pinMode(ledPin,OUTPUT);
@@ -295,11 +261,8 @@ ss.begin(9600);
 #ifdef DEBUG
   debug.flush();
   debug.println();
-  debug.println();
-  debug.println(F("=========================================="));
   debug.print(F("DEBUG:- ")); 
   debug.println(F(VERSION)); 
-  debug.println(F("=========================================="));
   debug.println();
 #endif
 
@@ -307,12 +270,13 @@ ss.begin(9600);
   delay(1000);
   configModem();
   
+  Serial.flush();
+  
   txTimer = millis();
   
 #ifdef OLED  
   oled.clear();
   oledLine1();
-
 #endif  
 
 } // end setup()
@@ -346,6 +310,23 @@ void loop()
       gps.encode(ss.read());
     }
     
+    
+  while (Serial.available() > 0)
+  {
+	char ch = microaprs.read();
+	if (ch == '\n')
+	{
+		packet[buflen] = 0;
+		show_packet();
+		buflen = 0;
+	}
+	else if ((ch > 31 || ch == 0x1c || ch == 0x1d || ch == 0x27) && buflen < BUFLEN)
+	{
+		// Mic-E uses some non-printing characters
+		packet[buflen++] = ch;
+	}
+  }
+
 ///////////////// Triggered by location updates /////////////////////// 
    if ( gps.location.isUpdated() ) { 
 
@@ -360,6 +341,15 @@ void loop()
           gps.location.lng(),
           lastTxLat,
           lastTxLng);
+          
+    base = TinyGPSPlus::distanceBetween(
+          gps.location.lat(),
+          gps.location.lng(),
+          HOME_LAT, 
+          HOME_LON)/1000; 
+          
+     latitude = gps.location.lat();
+     longitude = gps.location.lng();   
           
       // Get headings and heading delta
       currentHeading = (int) gps.course.deg();
@@ -384,68 +374,15 @@ void loop()
 #ifdef OLED
       oled.setTextSize(1,1);        // 5x7 characters, pixel spacing = 1
 
+  // Swap the 1st 2 lines of display of gps info or rx/tx packets every 5 secs 
   if ( gps.time.second() % 10 == 0 ) {
       oledLine2();
   } else if ( gps.time.second() % 5 == 0 ) {
       oledLine1();
   } 
   
-
-
 #endif
 
-#ifdef LCD20x4
-     lcd.clear();
-     lcd.setCursor(1,0);
-     lcd.print("   ");
-     //lcd.setCursor(1,0);
-     //lcd.print(txCounter);
-
-     lcd.setCursor(4,0);
-     lcd.print("       ");
-     lcd.setCursor(4,0);
-     lcd.print(lastTx);
-     
-     lcd.setCursor(10,0);
-     lcd.print("    ");  
-     lcd.setCursor(10,0);
-     lcd.print((int)lastTxdistance);    
-
-     lcd.setCursor(14,0);
-     lcd.print("    ");  
-     lcd.setCursor(14,0);
-     lcd.print((float)homeDistance/1000,1); 
-     
-     lcd.setCursor(18,0);   
-     lcd.print("  "); 
-     lcd.setCursor(18,0);   
-     lcd.print(gps.satellites.value());
-    
-     lcd.setCursor(0,1);
-     lcd.print("H:");
-     lcd.print(Hd);
-     lcd.print(" T:");
-     lcd.print(Ti);
-     lcd.print(" D:");
-     lcd.print(Di);
-     lcd.print(" B:");
-     lcd.print(Bn);
-     
-     lcd.setCursor(0,2);
-     lcd.print("S:");
-     lcd.print((int) gps.speed.kmph());
-     lcd.print(" H:");
-     lcd.print((int) gps.course.deg()); 
-     lcd.print(" Ttl:");
-     lcd.print(txCounter);
- 
-     lcd.setCursor(0,3);
-     lcd.print(gps.location.lat(),5);
-     lcd.setCursor(10,3);
-     lcd.print(gps.location.lng(),5);
-     delay(30); // To see the LCD display, add a little delays here
-#endif
-     
 // Change the Tx internal based on the current speed
 // This change will not affect the countdown timer
 // Based on HamHUB Smart Beaconing(tm) algorithm
@@ -471,22 +408,16 @@ void loop()
   lastTx = millis() - txTimer;
 
   // Only check the below if locked satellites < 3
-#ifdef GPSSIM
-   if ( gps.satellites.value() == 0 ) {
-#else
+
    if ( gps.satellites.value() > 3 ) {
-#endif    
     if ( lastTx > 5000 ) {
         // Check for heading more than 25 degrees
         if ( headingDelta < -25 || headingDelta >  25 ) {
               Hd++;
 #ifdef DEBUG                
-            debug.println(F("*** Heading Change "));
+            debug.println(F("*Head "));
 #endif            
-#ifdef LCD20x4            
-            lcd.setCursor(0,0);
-            lcd.print("H");  
-#endif            
+           
             TxtoRadio();
             previousHeading = currentHeading;
             // Reset the txTimer & lastTX for the below if statements
@@ -501,14 +432,11 @@ void loop()
               Di++;
 #ifdef DEBUG                     
             debug.println();
-            debug.println(F("*** Distance > 600m ")); 
-            debug.print(F("lastTxdistance:"));
+            debug.println(F("*D > 600m ")); 
+            debug.print(F("lastTxd:"));
             debug.println(lastTxdistance);
 #endif          
-#ifdef LCD20x4                        
-            lcd.setCursor(0,0);
-            lcd.print("D");
-#endif            
+          
             TxtoRadio();
             lastTxdistance = 0;   // Ensure this value is zero before the next Tx
             // Reset the txTimer & lastTX for the below if statements            
@@ -526,17 +454,13 @@ void loop()
                    debug.println();
                    debug.print(F("lastTx:"));
                    debug.print(lastTx);
-                   debug.print(F(" txInterval:"));
+                   debug.print(F(" txI:"));
                    debug.print(txInterval);     
-                   debug.print(F(" lastTxdistance:"));
+                   debug.print(F(" lastTxd:"));
                    debug.println(lastTxdistance);               
-                   debug.println(F("*** txInterval "));  
+                   debug.println(F("*TxI "));  
 
-#endif                   
-#ifdef LCD20x4            
-                   lcd.setCursor(0,0);
-                   lcd.print("T");    
-#endif                   
+#endif                                     
                    TxtoRadio(); 
                    
                    // Reset the txTimer & lastTX for the below if statements   
@@ -553,13 +477,9 @@ void loop()
 #ifdef DEBUG                
                 debug.println();             
                 debug.println(analogRead(0));
-                debug.println(F("*** Button ")); 
+                debug.println(F("*B ")); 
  
-#endif                
-#ifdef LCD20x4                            
-                lcd.setCursor(0,0);
-                lcd.print("B");     
-#endif                     
+#endif                                   
                 TxtoRadio(); 
                 // Reset the txTimer & lastTX for the below if statements  
                 txTimer = millis(); 
@@ -569,15 +489,134 @@ void loop()
      
 } // end loop()
 
+// New MicroAPRS function
+void show_packet()
+{
+	char *posit, *pmsgTo, *call, *pmsg;
+	char type, pmsgID;
+	long lat, lon;
+        static boolean nextLine = 0;
+
+	microaprs.decode_posit(packet, &call, &type, &posit, &lon, &lat, &pmsgTo, &pmsg, &pmsgID);
+
+#ifdef DEBUG    
+		debug.print("Input:");
+		debug.println(packet);
+		debug.print("Callsign:");
+		debug.print(call);
+		debug.print("  t:");
+                debug.print(type);                        
+		debug.print"  p:");
+		debug.print(posit);
+		debug.print(" ");
+		debug.print(wayPointLatitude,5);
+		debug.print("  ");
+		debug.print(wayPointLongitude,5);
+		debug.print(" ");
+		debug.print(bearing, 0);
+		debug.print("deg ");
+		debug.print(distanceToWaypoint,1);
+		debug.println("km");
+#endif
+
+	if (type == 58) // 58 = "!" = Message
+	{
+		if (startsWith(MYCALL, pmsgTo))
+		{
+                    mCounter++;
+                    oled.setCursor(2,0);
+                    clear3Line();                        
+                    oled.setCursor(2,0);
+                    oled.print("F:");
+                    oled.print(call);
+                    oled.setCursor(3,0);
+                    oled.print("M:");
+                    oled.print(pmsg);
+                    
+                    // Beep 3 times
+                    digitalWrite(buzzerPin,HIGH);  // Buzz the user
+                    delay(100);
+                    digitalWrite(buzzerPin,LOW); 
+                    delay(100);
+                    digitalWrite(buzzerPin,HIGH);  // Buzz the user
+                    delay(100);
+                    digitalWrite(buzzerPin,LOW); 
+                    delay(100);
+                    digitalWrite(buzzerPin,HIGH);  // Buzz the user
+                    delay(100);
+                    digitalWrite(buzzerPin,LOW); 
+                    
+#ifdef DEBUG                
+  		    debug.print("Msg:");
+		    debug.println(pmsg);
+
+#endif
+                nextLine ^= 1 << 1;  // Toggle nextLine
+		}
+	}
+	else // Not message, decode , calculate and display packets
+	{   		
+            wayPointLatitude = lat;		
+            wayPointLongitude = lon;
+
+            wayPointLatitude = wayPointLatitude / 1000000;
+	    wayPointLongitude = wayPointLongitude / 1000000;
+
+	    distanceToWaypoint = calculateDistance();
+	    bearing = calculateBearing();
+  
+            // Check for valid decoded packets
+            if ( strlen(call) < 12 ) {
+            lastRx = millis();
+            packetDecoded++;
+
+                if ( !nextLine ) {
+                    oled.setCursor(2,0);
+                    clear3Line();
+                    oled.setCursor(2,0);
+                    oled.print(call);
+                    oled.print(" ");
+                    if (distanceToWaypoint < 1000 ) {
+                      oled.print(bearing, 0);
+                      oled.print("d ");                      
+                      oled.print(distanceToWaypoint,1); 
+                      oled.print("km");
+                    }
+
+                    oled.setCursor(3,0);
+                    oled.print(posit);
+                } else {
+                    oled.setCursor(5,0);
+                    clear3Line();
+                    oled.setCursor(5,0);
+                    oled.print(call);
+                    oled.print(" ");                    
+                    if (distanceToWaypoint < 1000 ) {
+                      oled.print(bearing, 0);
+                      oled.print("d ");                      
+                      oled.print(distanceToWaypoint,1);
+                      oled.print("km");                    
+                    }
+                    
+                    oled.setCursor(6,0);
+                    oled.print(posit);                  
+                }  // endif !nextLine
+                
+	      } // endif check for valid packets
+
+              // Toggle the nextLine 
+              nextLine ^= 1 << 1;  
+	}
+}
 
 // Functions for OLED
 #ifdef OLED
 void oledLine1() {
   
     oled.setCursor(0,0);
-    oled.write("                     "); // Clear the old line, 21 spaces
+    clearLine();
     oled.setCursor(1,0);
-    oled.write("                     "); // Clear the old line, 21 spaces
+    clearLine();
     oled.setCursor(0,0);   
     oled.print('0');
     oled.print(convertDegMin(gps.location.lat()),2);
@@ -603,16 +642,19 @@ void oledLine1() {
 
 void oledLine2() {    
     oled.setCursor(0,0);
-    oled.write("                     "); // Clear the old line, 21 spaces
+    clearLine();
     oled.setCursor(1,0);
-    oled.write("                     "); // Clear the old line, 21 spaces
+    clearLine();
     oled.setCursor(0,0);   
     oled.print("Rx:");
     oled.print(packetDecoded);  
     oled.print(" Tx:");
     oled.print(txCounter);
+    oled.print(" L:");
+    oled.print((unsigned int)(millis()-lastRx)/1000);  // Print the seconds since last Rx
 
-    oled.setCursor(1,0);       
+    oled.setCursor(1,0);  
+/*    
     oled.print("H:");
     oled.print(Hd);
     oled.print(" T:");
@@ -621,22 +663,23 @@ void oledLine2() {
     oled.print(Di);
     oled.print(" B:");
     oled.print(Bn);  
+ */ 
+    oled.print("M:");
+    oled.print(mCounter);    // Messages received   
+    oled.print(" B:");
+    oled.print(base,0);     // Only shows km
+    oled.print(" U:");
+    oled.print((float) millis()/60000,0); // Only shows in minutes
 }
 #endif
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void serialEvent() {
-  
-#ifdef DEBUG            
-  debug.println("Entering serialEvent...");
-#endif
-
-  while ( Serial.available() > 0) {
-    processIncomingByte( Serial.read() );
-  }
+void clearLine() {
+     for ( int i=0;i<21;i++) { oled.write(' '); } 
 }
 
+void clear3Line() {
+     for ( int i=0;i<64;i++) { oled.write(' '); } 
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -691,64 +734,38 @@ void TxtoRadio() {
        debug.print(gps.date.year());
        debug.println();
 
-       debug.print("GPS: ");
+       debug.print("G:");
        debug.print(lastTxLat,5);
        debug.print(" ");
        debug.print(lastTxLng,5);
        debug.println();
 
-       debug.print("Sat:");           
+       debug.print("S:");           
        debug.print(gps.satellites.value());
-       debug.print(" HDOP:");
+       debug.print(" H:");
        debug.print(gps.hdop.value());
        debug.print(" km/h:");           
        debug.print((unsigned int) gps.speed.kmph());
-       debug.print(" Head:");
+       debug.print(" C:");
        debug.print((unsigned int) gps.course.deg());          
-       debug.print(" Alt:");
+       debug.print(" A:");
        debug.print((unsigned int) gps.altitude.meters());
        debug.print("m");
        debug.println();
 
-       debug.print(F("Distance(m): Home:"));
+       debug.print(F("H:"));
        debug.print(homeDistance,2);
-       debug.print(" Last:");  
+       debug.print(" L:");  
        debug.print(lastTxdistance,2);
        debug.println(); 
      
-       debug.print(F("Tx since "));  
-       debug.print((float)lastTx/1000); 
-       debug.println(" sec");   
+       debug.print(F("Last "));  
+       debug.println((float)lastTx/1000); 
 #endif             
  
 
        // Only send status/version every 10 packets to save packet size  
        if ( ( txCounter % 10 == 0 ) || buttonPressed ) {
-
-          float base = TinyGPSPlus::distanceBetween(
-          gps.location.lat(),
-          gps.location.lng(),
-          HOME_LAT, 
-          HOME_LON)/1000;  
-          
-          float r1 = TinyGPSPlus::distanceBetween(
-          gps.location.lat(),
-          gps.location.lng(),
-          R1_LAT, 
-          R1_LON)/1000;            
-
-          float r2 = TinyGPSPlus::distanceBetween(
-          gps.location.lat(),
-          gps.location.lng(),
-          R2_LAT, 
-          R2_LON)/1000; 
-          
-          float r3 = TinyGPSPlus::distanceBetween(
-          gps.location.lat(),
-          gps.location.lng(),
-          R3_LAT, 
-          R3_LON)/1000; 
-
          cmtOut.concat("!>");                
          cmtOut.concat(VERSION);       
          cmtOut.concat(Volt);
@@ -765,7 +782,7 @@ void TxtoRadio() {
          cmtOut.concat(" Seq:");         
          cmtOut.concat(txCounter);
 #ifdef DEBUG          
-       debug.print("TX STR: ");
+       debug.print("STR: ");
        debug.print(cmtOut);  
        debug.println(); 
 #endif          
@@ -800,7 +817,7 @@ void TxtoRadio() {
        cmtOut.concat(txCounter);       
 
 #ifdef DEBUG          
-       debug.print("TX STR: ");
+       debug.print("STR: ");
        debug.print(latOut);  
        debug.print(" ");       
        debug.print(lngOut);  
@@ -828,215 +845,84 @@ void TxtoRadio() {
        buttonPressed = 0;
        lastTx = 0;
 #ifdef DEBUG               
-       debug.print(F("FreeRAM:"));
+       debug.print(F("F:"));
        debug.print(Mem);
-       debug.print(" Uptime:");
+       debug.print(" U:");
        debug.println((float) millis()/1000);
-       debug.println(F("=========================================="));
 #endif     
 
        txCounter++;
      } // endif lastTX
-     
-     
 } // endof TxtoRadio()
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void processIncomingByte (const byte inByte)
-  {
-  static char input_line [MAX_INPUT];
-  static unsigned int input_pos = 0;
-
-  switch (inByte)
-    {
-
-    case '\n':   
-      input_line [input_pos] = 0;  // terminating null byte
-      if ( input_pos > 0 ) {  // if not zero bytes
-      process_data (input_line);
-      }
-      input_pos = 0;  
-      break;
-
-    case '\r':   
-      //input_line [input_pos] = 0;  // terminating null byte
-      //process_data (input_line);
-      //input_pos = 0;      
-      break;
-
-    default:
-      // keep adding if not full ... allow for terminating null byte
-      if (input_pos < (MAX_INPUT - 1))
-        input_line [input_pos++] = inByte;
-      break;
-
-    }  // end of switch
-   
-} // end of processIncomingByte
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void process_data (char * input){
-
-  String temp, temp2 = "";
-  byte callIndex,callIndex2, dataIndex = 0;
-  static char callsign[12]="";
-  static char data[MAX_INPUT-13]="";
-  static boolean nextLine = 0;
- 
-#ifdef DEBUG            
-  debug.print("INPUT (");
-  debug.print(strlen(input));
-  debug.print("):");
-  debug.println(input);
-#endif
-
-  temp = input;  
-  callIndex = temp.indexOf("[");
-  callIndex2 = temp.indexOf("]");
-  temp2 = temp.substring(callIndex+1,callIndex2);  
-  temp2.toCharArray(callsign,temp2.length()+1);
- 
-  temp2 = "";
-  dataIndex = temp.indexOf("DATA:");
-  temp2 = temp.substring(dataIndex+6,temp.length());
-  temp2.toCharArray(data,temp2.length()+1);
-
-  if ( strlen(callsign) > 5 ) {  
-        packetDecoded++;
-  }
-
-#ifdef DEBUG            
-  
-  debug.print("Callsign:");
-  debug.println(callsign); 
-  debug.print("Data (");
-  debug.print(strlen(data));
-  debug.print("):");
-  
-  debug.println(data);  
-#endif
-
-#ifdef OLED
-  if ( !nextLine ) {
-    oledLine2();
-    oled.setCursor(2,0);
-    oled.write("            ");
-    oled.setCursor(2,0);
-    oled.print(callsign);
-  
-    oled.setCursor(2,65);
-    for ( int i=0;i<53;i++) {
-      oled.write(' ');
-    }
-    oled.setCursor(2,65);  
-    data[53] = 0;  // Truncate the data to 52 chars
-    oled.print(data);
-  
-  } else {
-    oledLine2();
-    oled.setCursor(5,0);
-    oled.write("            ");
-    oled.setCursor(5,0);
-    oled.print(callsign);
-
-    oled.setCursor(5,64);  
-    for ( int i=0;i<53;i++) {
-      oled.write(' ');
-    }
-    oled.setCursor(5,64);
-    data[53] = 0;  // Truncate the data to 52 chars
-    oled.print(data);  
-  
-  }
-  // Toggle the nextLine 
-  nextLine ^= 1 << 1;  
-#endif
-  
-}  // end of process_data
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 void configModem() {
 // Functions to configure the callsign, ssid, path and other settings
-// c<callsign>
-// sc<ssid>
-// pd0 - turn off DST display
-// pp0 - turn on PATH display
 
 #ifdef OLED
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
-    oled.write("                      "); // Clear the old line, 21 spaces
+    clearLine();
     oled.setCursor(1,0);
-    oled.write("Config modem...");  
+    oled.write("Config...");  
 #endif    
     
-#ifdef LCD20x4                            
-  lcd.setCursor(0,1);
-  lcd.print("Configuring modem");
-#endif
   digitalWrite(ledPin,HIGH);  
   Serial.println("1WIDE1");  // Set PATH1 callsign
-  delay(200);
+  delay(100);
   
   digitalWrite(ledPin,LOW);  
   Serial.println("2WIDE2");  // Set PATH2 callsign
-  delay(200);
+  delay(100);
   
   digitalWrite(ledPin,HIGH);    
   Serial.println("dAPZSVT");  // Set DST Callsign to APRSVTH
-  delay(200);
+  delay(100);
 
   digitalWrite(ledPin,LOW);    
   Serial.print("c");          // Set SRC Callsign
   Serial.println(MYCALL);     // Set SRC Callsign
-  delay(200);
+  delay(100);
   
   digitalWrite(ledPin,HIGH);    
   Serial.print("sc");         // Set SRC SSID
   Serial.println(CALL_SSID);      // Set SRC SSID
-  delay(200);
+  delay(100);
   
   digitalWrite(ledPin,LOW);    
-  Serial.println("pd0");      // Disable printing DST 
-  delay(200);
+  Serial.println("pd1");      // Ensable printing DST 
+  delay(100);
 
   digitalWrite(ledPin,HIGH);    
   Serial.println("pp0");      // Disable printing PATH
-  delay(200);
+  delay(100);
   
   digitalWrite(ledPin,LOW);    
   Serial.print("ls");      // Set symbol n / Bluedot
   Serial.println(SYMBOL_CHAR);      // Set symbol n / Bluedot
-  delay(200);
+  delay(100);
 
   digitalWrite(buzzerPin,HIGH);  // Turn on buzzer
   digitalWrite(ledPin,HIGH);    
   Serial.print("lt");      // Standard symbol 
   Serial.println(SYMBOL_TABLE);      // Standard symbol   
-  delay(200);
+  delay(100);
 
   digitalWrite(buzzerPin,LOW);  
   digitalWrite(ledPin,LOW);    
   Serial.println("V1");      
-  delay(200);
+  delay(100);
 
 #ifdef OLED
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
-    oled.write("                      "); // Clear the old line, 21 spaces
+    clearLine();
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
-    oled.print("Config done...");  
+    oled.print("Done...");  
     delay(500);
+    oled.clear();
 #endif  
-  
-#ifdef LCD20x4 
-
-  lcd.setCursor(1,0);
-  lcd.print("Done................");
-  delay(500);
-#endif                             
+                            
   
 }
 
@@ -1105,4 +991,52 @@ int freeRam() {
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
+// convert degrees to radians
+void radianConversion()
+{
+	deltaLatitudeRadians = (wayPointLatitude - latitude) * pi / 180;
+	deltaLongitudeRadians = (wayPointLongitude - longitude) * pi / 180;
+	latitudeRadians = latitude * pi / 180;
+	wayPointLatitudeRadians = wayPointLatitude * pi / 180;
+	longitudeRadians = longitude * pi / 180;
+	wayPointLongitudeRadians = wayPointLongitude * pi / 180;
+}
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+// calculate distance from present location to next way point
+float calculateDistance()
+{
+	radianConversion();
+	float a = sin(deltaLatitudeRadians / 2) * sin(deltaLatitudeRadians / 2) +
+	          sin(deltaLongitudeRadians / 2) * sin(deltaLongitudeRadians / 2) *
+	          cos(latitudeRadians) * cos(wayPointLatitudeRadians);
+	float c = 2 * atan2(sqrt(a), sqrt(1 - a));
+	float d = radiusOfEarth * c;
+	return d * 1;                  // distance in kilometers
+//  return d * 0.621371192;        // distance in miles
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+// calculate bearing from present location to next way point
+float calculateBearing()
+{
+	radianConversion();
+	float y = sin(deltaLongitudeRadians) * cos(wayPointLatitudeRadians);
+	float x = cos(latitudeRadians) * sin(wayPointLatitudeRadians) -
+	          sin(latitudeRadians) * cos(wayPointLatitudeRadians) * cos(deltaLongitudeRadians);
+	bearing = atan2(y, x) / pi * 180;
+	if(bearing < 0)
+	{
+		bearing = 360 + bearing;
+	}
+	return bearing;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool startsWith(const char *pre, const char *str)
+{
+	size_t lenpre = strlen(pre),
+	       lenstr = strlen(str);
+	return lenstr < lenpre ? false : strncmp(pre, str, lenpre) == 0;
+}
