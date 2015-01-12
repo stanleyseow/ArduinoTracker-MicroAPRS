@@ -1,4 +1,9 @@
 // Simple Hello world demo
+// Modified by Stanley Seow <stanleyseow@gmail.com>
+// For the SVTrackR 0.96" OLED
+// This is a small memory text ONLY driver for SSD 1306 graphic driver
+//
+//
 #include <SPI.h>
 #include <SSD1306_text.h>
 #include <stdlib.h>
@@ -8,11 +13,11 @@
 
 #if HW_SPI
 // Hardware SPI pins include D11=Data and D13=Clk
-#define OLED_DC 6
-#define OLED_CS 7
-#define OLED_RST 8
+// Default for 0.96" SPI OLED
+#define OLED_DC 7
+#define OLED_CS 0
+#define OLED_RST 10
 SSD1306_text oled(OLED_DC, OLED_RST, OLED_CS);
-
 #else
 // Bit Twiddle "soft" SPI pin definitions
 #define OLED_DATA 9

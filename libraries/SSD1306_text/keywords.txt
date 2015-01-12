@@ -1,0 +1,30 @@
+#######################################
+# Syntax Coloring Map For SSD1306_text
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+SSD1306_text	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+init		KEYWORD2
+clear		KEYWORD2
+setCursor	KEYWORD2
+setTextSize	KEYWORD2
+write		KEYWORD2
+sendCommand KEYWORD2
+sendData	KEYWORD2
+
+#######################################
+# Instances (KEYWORD2)
+#######################################
+
+
+#######################################
+# Constants (LITERAL1)
+#######################################

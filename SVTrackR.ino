@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v1.0 " 
+#define VERSION "SVTrackR v1.1 " 
 
 /*
 
@@ -90,6 +90,10 @@
  1 Dec 2014 ( v1.0 )
  - Added mic-e/compressed packets decoding from MicroAPRS libs
  - Ability to display received messages
+
+ 24 Dec 2014 ( v1.1 )
+ - Added comment parsing codes from latest MicroAPRS libs
+ - Added status ">" type parsing
   
 */
 
@@ -492,12 +496,13 @@ void loop()
 // New MicroAPRS function
 void show_packet()
 {
-	char *posit, *pmsgTo, *call, *pmsg;
+	char *posit, *pmsgTo, *call, *pcomment, *pmsg;
 	char type, pmsgID;
 	long lat, lon;
         static boolean nextLine = 0;
 
-	microaprs.decode_posit(packet, &call, &type, &posit, &lon, &lat, &pmsgTo, &pmsg, &pmsgID);
+        // Only displasy if decode is true
+	if ( microaprs.decode_posit(packet, &call, &type, &posit, &lon, &lat, &pcomment, &pmsgTo, &pmsg, &pmsgID) ) {
 
 #ifdef DEBUG    
 		debug.print("Input:");
@@ -508,6 +513,8 @@ void show_packet()
                 debug.print(type);                        
 		debug.print"  p:");
 		debug.print(posit);
+		debug.print"  comment:");
+		debug.println(pcomment);
 		debug.print(" ");
 		debug.print(wayPointLatitude,5);
 		debug.print("  ");
@@ -584,7 +591,7 @@ void show_packet()
                     }
 
                     oled.setCursor(3,0);
-                    oled.print(posit);
+                    oled.print(pcomment);
                 } else {
                     oled.setCursor(5,0);
                     clear3Line();
@@ -599,7 +606,7 @@ void show_packet()
                     }
                     
                     oled.setCursor(6,0);
-                    oled.print(posit);                  
+                    oled.print(pcomment);                  
                 }  // endif !nextLine
                 
 	      } // endif check for valid packets
@@ -607,6 +614,7 @@ void show_packet()
               // Toggle the nextLine 
               nextLine ^= 1 << 1;  
 	}
+    } // endif microaprs.decode_posit()
 }
 
 // Functions for OLED
@@ -865,7 +873,11 @@ void configModem() {
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
     clearLine();
     oled.setCursor(1,0);
-    oled.write("Config...");  
+    oled.print("Config ");  
+    oled.print(MYCALL);  
+    oled.print("-");  
+    oled.print(CALL_SSID);  
+
 #endif    
     
   digitalWrite(ledPin,HIGH);  
@@ -918,7 +930,8 @@ void configModem() {
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
     clearLine();
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
-    oled.print("Done...");  
+    delay(1000);
+    oled.print("Done..........");  
     delay(500);
     oled.clear();
 #endif  
@@ -1040,3 +1053,4 @@ bool startsWith(const char *pre, const char *str)
 	       lenstr = strlen(str);
 	return lenstr < lenpre ? false : strncmp(pre, str, lenpre) == 0;
 }
+

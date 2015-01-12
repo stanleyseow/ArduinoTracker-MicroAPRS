@@ -16,40 +16,6 @@ MicroAPRS::MicroAPRS(Stream *s) {
   defaultDestination="APOTW1";
 }
 
-void MicroAPRS::setCall(char *call) {
-  stream->print("c");
-  stream->print(call);
-  stream->print("\r\n");
-  awaitResponse("1");
-}
-
-
-
-void MicroAPRS::sendPacket(char *message) {
-  sendPacket(defaultDestination, message);
-  stream->print("!");
-  stream->print(message);
-  stream->print("\r\n");
-  delay(50 * strlen(message));
-}
-
-void MicroAPRS::sendPacket(char *destination, char *message) {
-  stream->print("!");
-  stream->print(destination);
-  stream->print(":");
-  stream->print(message);
-  stream->print("\r\n");
-  delay(50 * strlen(message));
-  delay(50 * strlen(destination));
-}
-
-
-void MicroAPRS::awaitResponse(char *response) {
-  while (available() > 0) {  
-    char inbyte = stream->read();
-    if (inbyte == response[0]) return;
-  }
-}
 
 int MicroAPRS::read() {
   return stream->read();
@@ -59,13 +25,8 @@ int MicroAPRS::available() {
   return stream->available();
 }
 
-void MicroAPRS::setDefaultDestination(char *destination) {
-  defaultDestination = destination;
-}
 
-
-
-boolean MicroAPRS::decode_posit(char *packet, char **pcall, char *ptype, char **pposit, long *plon, long *plat, char **pmsgTo, char **pmsg, char *pmsgID) {
+boolean MicroAPRS::decode_posit(char *packet, char **pcall, char *ptype, char **pposit, long *plon, long *plat, char **pcomment, char **pmsgTo, char **pmsg, char *pmsgID) {
   char *callsignBegin = packet+5;
   *callsignBegin++ = 0;
   char *callsignEnd = strchr(callsignBegin, ']');
@@ -100,6 +61,14 @@ boolean MicroAPRS::decode_posit(char *packet, char **pcall, char *ptype, char **
 
     if (type == '`' || type == '\'') {
       // MIC-E compression
+        char *positEnd = posit+8;
+      	if (posit[12] == '}'){
+      		positEnd = posit+13;
+      	}      	
+		char *comment = positEnd++;
+		//*positEnd++ = 0;
+		*pcomment = comment;
+		
       if (! decode_mic_e(destination, posit, plat, plon))
 	return false;
     } else if (type == ':') {
@@ -132,17 +101,29 @@ boolean MicroAPRS::decode_posit(char *packet, char **pcall, char *ptype, char **
 	// terminated by space or EOL (length "3741.84N/12202.85W")
 	char sym1 = *posit;
 	char sym2 = ' ';
-	if (sym1 == '/' || sym1 == '\\') {
-	  // Base91 Compressed
-	  posit[13] = 0;
-	  decode91(posit, plat, plon, &sym2);
-	} else 	if (posit[1] >= '0' && posit[1] <= '9') {
-	  posit[18] = 0;
-	  decode_latlon(posit, plat, plon, &sym2);
+	char *positEnd = strchr(posit, ' ');
+	char *comment = positEnd+1;
+	//*positEnd++ = 0;	
+	*pcomment = comment;
+	
+		if (sym1 == '/' || sym1 == '\\') {
+		// Base91 Compressed
+		posit[13] = 0;
+		decode91(posit, plat, plon, &sym2);
+		} else 	if (posit[1] >= '0' && posit[1] <= '9') {
+		posit[18] = 0;
+		decode_latlon(posit, plat, plon, &sym2);
+		} else {
+		return false;
+		}
+    } else if (type == '>' ) {
+	// Check for status type
+	// Everything after > is a comment
+	// e.g. >SVTrackR v1.0 5.24V S:9 B:0.51 U:21.32 Seq:70
+	char *comment = posit;
+	*pcomment = comment;
+
 	} else {
-	  return false;
-	}
-    } else {
       return false;
     }
   }
