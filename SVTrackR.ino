@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v1.1 " 
+#define VERSION "SVTrackR v1.4 " 
 
 /*
 
@@ -94,10 +94,19 @@
  24 Dec 2014 ( v1.1 )
  - Added comment parsing codes from latest MicroAPRS libs
  - Added status ">" type parsing
-
- 15 Mar 2015 ( v1.2 )
+ 
+ 20 Jan 2015 ( v1.2 )
+ - Modify Tx position before Tx status with 3 secs delay
+ 
+ 25 Jan 2015 ( V1.3 )
+ - Added smartDelay for Tx status to display any received packets during the smartDelay period
+ - Added 2 short beeps if Rx station is within 500m away
+ 
+  15 Mar 2015 ( v1.4 - lamaral )
  - Fixed the hardcoding of the North and East on the GPS position
- - Added custom comment on APRS packet
+ - Added custom comment on APRS packet 
+ - Appended "0" if Lat/Lng is less than 10 deg
+  
   
 */
 
@@ -420,13 +429,14 @@ void loop()
    if ( gps.satellites.value() > 3 ) {
     if ( lastTx > 5000 ) {
         // Check for heading more than 25 degrees
-        if ( headingDelta < -25 || headingDelta >  25 ) {
+        if ( (headingDelta < -25 || headingDelta >  25) && lastTxdistance > 5 ) {
               Hd++;
 #ifdef DEBUG                
             debug.println(F("*Head "));
 #endif            
            
             TxtoRadio();
+            lastTxdistance = 0;   // Ensure this value is zero before the next Tx
             previousHeading = currentHeading;
             // Reset the txTimer & lastTX for the below if statements
             txTimer = millis(); 
@@ -508,6 +518,7 @@ void show_packet()
         // Only displasy if decode is true
 	if ( microaprs.decode_posit(packet, &call, &type, &posit, &lon, &lat, &pcomment, &pmsgTo, &pmsg, &pmsgID) ) {
 
+/* 
 #ifdef DEBUG    
 		debug.print("Input:");
 		debug.println(packet);
@@ -515,9 +526,9 @@ void show_packet()
 		debug.print(call);
 		debug.print("  t:");
                 debug.print(type);                        
-		debug.print"  p:");
+		debug.print("  p:");
 		debug.print(posit);
-		debug.print"  comment:");
+		debug.print("  comment:");
 		debug.println(pcomment);
 		debug.print(" ");
 		debug.print(wayPointLatitude,5);
@@ -529,12 +540,15 @@ void show_packet()
 		debug.print(distanceToWaypoint,1);
 		debug.println("km");
 #endif
+*/
 
 	if (type == 58) // 58 = "!" = Message
 	{
 		if (startsWith(MYCALL, pmsgTo))
 		{
                     mCounter++;
+#ifdef OLED
+                    
                     oled.setCursor(2,0);
                     clear3Line();                        
                     oled.setCursor(2,0);
@@ -543,7 +557,7 @@ void show_packet()
                     oled.setCursor(3,0);
                     oled.print("M:");
                     oled.print(pmsg);
-                    
+#endif                    
                     // Beep 3 times
                     digitalWrite(buzzerPin,HIGH);  // Buzz the user
                     delay(100);
@@ -576,12 +590,24 @@ void show_packet()
 	    distanceToWaypoint = calculateDistance();
 	    bearing = calculateBearing();
   
+            // Beep twice is station is less than 500m
+            if ( distanceToWaypoint < 0.5 ) {
+                 digitalWrite(buzzerPin,HIGH);  // Buzz the user
+                 delay(100);
+                 digitalWrite(buzzerPin,LOW); 
+                 delay(100);
+                 digitalWrite(buzzerPin,HIGH);  // Buzz the user
+                 delay(100);
+                 digitalWrite(buzzerPin,LOW); 
+                 delay(100);
+            }
+            
             // Check for valid decoded packets
             if ( strlen(call) < 12 ) {
             lastRx = millis();
             packetDecoded++;
-
-                if ( !nextLine ) {
+#ifdef OLED
+                if ( !nextLine ) {                  
                     oled.setCursor(2,0);
                     clear3Line();
                     oled.setCursor(2,0);
@@ -612,10 +638,11 @@ void show_packet()
                     oled.setCursor(6,0);
                     oled.print(pcomment);                  
                 }  // endif !nextLine
+#endif
                 
 	      } // endif check for valid packets
 
-              // Toggle the nextLine 
+              // Toggle the nextLine                     
               nextLine ^= 1 << 1;  
 	}
     } // endif microaprs.decode_posit()
@@ -630,13 +657,35 @@ void oledLine1() {
     oled.setCursor(1,0);
     clearLine();
     oled.setCursor(0,0);   
-    oled.print('0');
-    oled.print(convertDegMin(gps.location.lat()),2);
-    oled.print('N');
-    oled.print('/');    
-    oled.print(convertDegMin(gps.location.lng()),2);
-    oled.print('E'); 
+    
+    if ( gps.location.lat() < 10 ) { 
+          oled.print('0');
+    }
 
+    oled.print(convertDegMin(gps.location.lat()),2);
+        
+    // Determime to print N or S     
+    if ( convertDegMin(gps.location.lat()) >= 0 ) {
+      oled.print('N');
+    } else if (convertDegMin(gps.location.lat()) < 0 ) {
+      oled.print('S');
+    }  
+    
+    oled.print('/'); 
+  
+    if ( gps.location.lng() < 10 ) { 
+          oled.print('0');
+    }
+    
+    oled.print(convertDegMin(gps.location.lng()),2);
+
+    // Determime to print E or W         
+    if ( convertDegMin(gps.location.lng()) >= 0 ) {
+        oled.print('E'); 
+    } else if ( convertDegMin(gps.location.lng()) < 0 ) {
+        oled.print('W'); 
+    }      
+    
     oled.setCursor(0,115);
     oled.print(gps.satellites.value());
 
@@ -683,7 +732,6 @@ void oledLine2() {
     oled.print(" U:");
     oled.print((float) millis()/60000,0); // Only shows in minutes
 }
-#endif
 
 void clearLine() {
      for ( int i=0;i<21;i++) { oled.write(' '); } 
@@ -692,6 +740,8 @@ void clearLine() {
 void clear3Line() {
      for ( int i=0;i<64;i++) { oled.write(' '); } 
 }
+#endif
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -707,7 +757,7 @@ void TxtoRadio() {
      lastTxLat = gps.location.lat();
      lastTxLng = gps.location.lng();
      
-     if ( lastTx >= 5000 ) { // This prevent ANY condition to Tx below 5 secs
+     if ( lastTx > 6000 ) { // This prevent ANY condition to Tx below 6 secs
 #ifdef DEBUG                 
        debug.print("Time/Date: ");
        byte hour = gps.time.hour() +8; // GMT+8 is my timezone
@@ -775,52 +825,35 @@ void TxtoRadio() {
        debug.println((float)lastTx/1000); 
 #endif             
  
-
-       // Only send status/version every 10 packets to save packet size  
-       if ( ( txCounter % 10 == 0 ) || buttonPressed ) {
-         cmtOut.concat("!>");                
-         cmtOut.concat(VERSION);       
-         cmtOut.concat(Volt);
-         cmtOut.concat("V S:");
-         cmtOut.concat(gps.satellites.value());
-         cmtOut.concat(" B:");         
-         if ( gps.satellites.value() > 3 ) {
-             cmtOut.concat(base);
-         } else {
-             cmtOut.concat("0");
-         }    
-         cmtOut.concat(" U:");         
-         cmtOut.concat((float) millis()/60000);
-         cmtOut.concat(" Seq:");         
-         cmtOut.concat(txCounter);
-#ifdef DEBUG          
-       debug.print("STR: ");
-       debug.print(cmtOut);  
-       debug.println(); 
-#endif          
-        digitalWrite(buzzerPin,HIGH);  // Turn on buzzer
-        Serial.println(cmtOut);
-        delay(200);   
-        digitalWrite(buzzerPin,LOW);   // Turn off buzzer
-        delay(2000);   
-        cmtOut = ""; 
-       } 
-        
        latDegMin = convertDegMin(lastTxLat);
        lngDegMin = convertDegMin(lastTxLng);
 
        dtostrf(fabs(latDegMin), 2, 2, tmp );
-       latOut.concat("lla");      // set latitute command with the 0
-       latOut.concat(tmp);
+       latOut.concat("lla");      // set latitute command 
+       
+       if ( lastTxLat < 10 ) {
+       latOut.concat("0");      // Append 0 if Lat less than 10         
+       }  
+       
+       latOut.concat(tmp);      // Actual Lat in DDMM.MM
+
+       // Determine E or W       
        if (latDegMin >= 0) {
            latOut.concat("N");
        } else if (latDegMin < 0) {
            latOut.concat("S");
        }
-     
+
        dtostrf(fabs(lngDegMin), 2, 2, tmp );
-       lngOut.concat("llo0");       // set longtitute command
-       lngOut.concat(tmp);
+       lngOut.concat("llo");       // set longtitute command
+
+       if ( lastTxLng < 10 ) {
+       latOut.concat("0");      // Append 0 if Lng less than 10         
+       }  
+
+       lngOut.concat(tmp);      // Actual Lng in DDDMM.MM
+
+       // Determine E or W
        if (lngDegMin >= 0) {
            lngOut.concat("E");
        } else if (latDegMin < 0) {
@@ -834,9 +867,9 @@ void TxtoRadio() {
        cmtOut.concat("/A=");
        cmtOut.concat(padding((int)gps.altitude.feet(),6));
        cmtOut.concat(" Seq:");
-       cmtOut.concat(txCounter);
+       cmtOut.concat(txCounter);      
        cmtOut.concat(" ");       
-       cmtOut.concat(COMMENT);
+       cmtOut.concat(COMMENT); 
 
 #ifdef DEBUG          
        debug.print("STR: ");
@@ -850,17 +883,48 @@ void TxtoRadio() {
        
        // This condition is ONLY for button pressed ( do not sent out position if not locked )
        if ( gps.satellites.value() > 3 ) {
-
        Serial.println(latOut);
        delay(200);
+       digitalWrite(buzzerPin,HIGH); 
        Serial.println(lngOut);
        delay(200);
-
-       digitalWrite(buzzerPin,HIGH); 
        Serial.println(cmtOut);
-       delay(200);
        digitalWrite(buzzerPin,LOW);     
+       delay(50);
        }
+       
+       
+        // Only send status/version every 10 packets to save packet size  
+       if ( ( txCounter % 10 == 0 ) || buttonPressed ) {
+  
+         digitalWrite(buzzerPin,HIGH);  // Turn on buzzer
+         cmtOut = ""; 
+         cmtOut.concat("!>");                
+         cmtOut.concat(VERSION);       
+         cmtOut.concat(Volt);
+         cmtOut.concat("V S:");
+         cmtOut.concat(gps.satellites.value());
+         cmtOut.concat(" B:");         
+         if ( gps.satellites.value() > 3 ) {
+             cmtOut.concat((unsigned int)base);
+         } else {
+             cmtOut.concat("0");
+         }    
+         cmtOut.concat(" U:");         
+         cmtOut.concat(millis()/60000);
+         cmtOut.concat(" Seq:");         
+         cmtOut.concat(txCounter);
+#ifdef DEBUG          
+       debug.print("STR: ");
+       debug.print(cmtOut);  
+       debug.println(); 
+#endif  
+        delay(200);   
+        digitalWrite(buzzerPin,LOW);   // Turn off buzzer
+        
+        smartDelay(5000);
+        Serial.println(cmtOut);
+       } 
        
        // Reset the txTimer & Tx internal   
        txInterval = 80000;
@@ -1066,5 +1130,30 @@ bool startsWith(const char *pre, const char *str)
 	size_t lenpre = strlen(pre),
 	       lenstr = strlen(str);
 	return lenstr < lenpre ? false : strncmp(pre, str, lenpre) == 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static void smartDelay(unsigned long ms)
+{
+  unsigned long start = millis();
+  do 
+  {
+     while (Serial.available() > 0)
+     {
+	char ch = microaprs.read();
+	if (ch == '\n')
+	{
+		packet[buflen] = 0;
+		show_packet();
+		buflen = 0;
+	}
+	else if ((ch > 31 || ch == 0x1c || ch == 0x1d || ch == 0x27) && buflen < BUFLEN)
+	{
+		// Mic-E uses some non-printing characters
+		packet[buflen++] = ch;
+	}
+    } // end of Serial.available while loop
+  } while (millis() - start < ms);
 }
 
