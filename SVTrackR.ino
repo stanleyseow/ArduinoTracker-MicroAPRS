@@ -94,6 +94,10 @@
  24 Dec 2014 ( v1.1 )
  - Added comment parsing codes from latest MicroAPRS libs
  - Added status ">" type parsing
+
+ 15 Mar 2015 ( v1.2 )
+ - Fixed the hardcoding of the North and East on the GPS position
+ - Added custom comment on APRS packet
   
 */
 
@@ -805,15 +809,23 @@ void TxtoRadio() {
        latDegMin = convertDegMin(lastTxLat);
        lngDegMin = convertDegMin(lastTxLng);
 
-       dtostrf(latDegMin, 2, 2, tmp );
-       latOut.concat("lla0");      // set latitute command with the 0
+       dtostrf(fabs(latDegMin), 2, 2, tmp );
+       latOut.concat("lla");      // set latitute command with the 0
        latOut.concat(tmp);
-       latOut.concat("N");
+       if (latDegMin >= 0) {
+           latOut.concat("N");
+       } else if (latDegMin < 0) {
+           latOut.concat("S");
+       }
      
-       dtostrf(lngDegMin, 2, 2, tmp );
-       lngOut.concat("llo");       // set longtitute command
+       dtostrf(fabs(lngDegMin), 2, 2, tmp );
+       lngOut.concat("llo0");       // set longtitute command
        lngOut.concat(tmp);
-       lngOut.concat("E");
+       if (lngDegMin >= 0) {
+           lngOut.concat("E");
+       } else if (latDegMin < 0) {
+           lngOut.concat("W");
+       }
      
        cmtOut.concat("@");
        cmtOut.concat(padding((int) gps.course.deg(),3));
@@ -822,7 +834,9 @@ void TxtoRadio() {
        cmtOut.concat("/A=");
        cmtOut.concat(padding((int)gps.altitude.feet(),6));
        cmtOut.concat(" Seq:");
-       cmtOut.concat(txCounter);       
+       cmtOut.concat(txCounter);
+       cmtOut.concat(" ");       
+       cmtOut.concat(COMMENT);
 
 #ifdef DEBUG          
        debug.print("STR: ");
