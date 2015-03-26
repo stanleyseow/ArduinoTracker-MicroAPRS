@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v1.4 " 
+#define VERSION "SVTrackR v1.5 " 
 
 /*
 
@@ -107,6 +107,9 @@
  - Added custom comment on APRS packet 
  - Appended "0" if Lat/Lng is less than 10 deg
   
+  23 Mar 2015 ( v1.5 - lamaral )
+ - Fixed the problem of appending a zero to negative coordinates
+ - Created the beep(int) function to save some memory
   
 */
 
@@ -559,17 +562,7 @@ void show_packet()
                     oled.print(pmsg);
 #endif                    
                     // Beep 3 times
-                    digitalWrite(buzzerPin,HIGH);  // Buzz the user
-                    delay(100);
-                    digitalWrite(buzzerPin,LOW); 
-                    delay(100);
-                    digitalWrite(buzzerPin,HIGH);  // Buzz the user
-                    delay(100);
-                    digitalWrite(buzzerPin,LOW); 
-                    delay(100);
-                    digitalWrite(buzzerPin,HIGH);  // Buzz the user
-                    delay(100);
-                    digitalWrite(buzzerPin,LOW); 
+                    beep(3);
                     
 #ifdef DEBUG                
   		    debug.print("Msg:");
@@ -592,14 +585,7 @@ void show_packet()
   
             // Beep twice is station is less than 500m
             if ( distanceToWaypoint < 0.5 ) {
-                 digitalWrite(buzzerPin,HIGH);  // Buzz the user
-                 delay(100);
-                 digitalWrite(buzzerPin,LOW); 
-                 delay(100);
-                 digitalWrite(buzzerPin,HIGH);  // Buzz the user
-                 delay(100);
-                 digitalWrite(buzzerPin,LOW); 
-                 delay(100);
+                 beep(2);
             }
             
             // Check for valid decoded packets
@@ -658,7 +644,7 @@ void oledLine1() {
     clearLine();
     oled.setCursor(0,0);   
     
-    if ( gps.location.lat() < 10 ) { 
+    if ( fabs(gps.location.lat()) < 10 ) { 
           oled.print('0');
     }
 
@@ -673,7 +659,7 @@ void oledLine1() {
     
     oled.print('/'); 
   
-    if ( gps.location.lng() < 10 ) { 
+    if ( fabs(gps.location.lng()) < 10 ) { 
           oled.print('0');
     }
     
@@ -831,7 +817,7 @@ void TxtoRadio() {
        dtostrf(fabs(latDegMin), 2, 2, tmp );
        latOut.concat("lla");      // set latitute command 
        
-       if ( lastTxLat < 10 ) {
+       if ( fabs(lastTxLat) < 10 ) {
        latOut.concat("0");      // Append 0 if Lat less than 10         
        }  
        
@@ -845,9 +831,9 @@ void TxtoRadio() {
        }
 
        dtostrf(fabs(lngDegMin), 2, 2, tmp );
-       lngOut.concat("llo");       // set longtitute command
+       lngOut.concat("llo0");       // set longtitute command
 
-       if ( lastTxLng < 10 ) {
+       if ( fabs(lastTxLng) < 10 ) {
        latOut.concat("0");      // Append 0 if Lng less than 10         
        }  
 
@@ -955,7 +941,6 @@ void configModem() {
     oled.print(MYCALL);  
     oled.print("-");  
     oled.print(CALL_SSID);  
-
 #endif    
     
   digitalWrite(ledPin,HIGH);  
@@ -1157,3 +1142,13 @@ static void smartDelay(unsigned long ms)
   } while (millis() - start < ms);
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+void beep(int i) {
+  while (i>0) {
+    digitalWrite(buzzerPin,HIGH);  // Buzz the user
+    delay(100);
+    digitalWrite(buzzerPin,LOW); 
+    delay(100);
+    i--; 
+  }
+}
