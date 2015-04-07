@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v1.5 " 
+#define VERSION "SVTrackR v1.5a " 
 
 /*
 
@@ -111,6 +111,9 @@
  - Fixed the problem of appending a zero to negative coordinates
  - Created the beep(int) function to save some memory
   
+  07 Apr 2015 ( v1.5a - stanleyseow )
+  - fixed the Lontitide with hard coded 0, will give coordinates errors if Lontitide is above 100 deg
+  - fixed OLED display for above errors
 */
 
 // Needed this to prevent compile error for #defines
@@ -658,7 +661,13 @@ void oledLine1() {
     }  
     
     oled.print('/'); 
-  
+
+    // Append 0 to OLED
+    if ( fabs(gps.location.lng()) < 100 ) { 
+          oled.print('0');
+    }
+
+    // Append 0 to OLED  
     if ( fabs(gps.location.lng()) < 10 ) { 
           oled.print('0');
     }
@@ -814,11 +823,13 @@ void TxtoRadio() {
        latDegMin = convertDegMin(lastTxLat);
        lngDegMin = convertDegMin(lastTxLng);
 
+       // Convert Lat float to string
        dtostrf(fabs(latDegMin), 2, 2, tmp );
        latOut.concat("lla");      // set latitute command 
        
+       // Append 0 if Lat less than 10 
        if ( fabs(lastTxLat) < 10 ) {
-       latOut.concat("0");      // Append 0 if Lat less than 10         
+       latOut.concat("0");              
        }  
        
        latOut.concat(tmp);      // Actual Lat in DDMM.MM
@@ -830,9 +841,16 @@ void TxtoRadio() {
            latOut.concat("S");
        }
 
+       // Convert Lng float to string
        dtostrf(fabs(lngDegMin), 2, 2, tmp );
-       lngOut.concat("llo0");       // set longtitute command
+       lngOut.concat("llo");       // set longtitute command
+       
+       // Append 0 if Lng less than 100
+       if ( ( fabs(lastTxLng) < 100) ) {
+             lngOut.concat("0");       // set longtitute command
+       }     
 
+       // Append 0 if Lng less than 10
        if ( fabs(lastTxLng) < 10 ) {
        latOut.concat("0");      // Append 0 if Lng less than 10         
        }  
@@ -1152,3 +1170,4 @@ void beep(int i) {
     i--; 
   }
 }
+
