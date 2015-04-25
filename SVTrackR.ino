@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v1.5a " 
+#define VERSION "SVTrackR v1.6 " 
 
 /*
 
@@ -114,6 +114,13 @@
   07 Apr 2015 ( v1.5a - stanleyseow )
   - fixed the Lontitide with hard coded 0, will give coordinates errors if Lontitide is above 100 deg
   - fixed OLED display for above errors
+  
+  24 Apr 2015 ( v1.6 - stanleyseow )
+  - append recevied callsign and distance to the end of comment
+  - fixes some txTimer and lastTx codes
+  - changed TxtoRadio return value to boolean and reason for Tx trigger
+  - removed unused variables  
+  
 */
 
 // Needed this to prevent compile error for #defines
@@ -210,6 +217,10 @@ const byte ledPin = 13;
 const unsigned int MAX_INPUT = 103;
 static unsigned int packetDecoded = 0;
 
+char *lastCall="";
+String rxCallsign="";
+unsigned int rxStation;
+
 unsigned int mCounter = 0;
 unsigned int txCounter = 0;
 unsigned long txTimer = 0;
@@ -221,7 +232,8 @@ int lastCourse = 0;
 byte lastSpeed = 0;
 byte buttonPressed = 0;
 
-static unsigned int Hd,Ti,Di,Bn = 0;
+// Unused
+//static unsigned int Hd,Ti,Di,Bn = 0;
 
 int previousHeading, currentHeading = 0;
 // Initial lat/lng pos, change to your base station coordnates
@@ -253,15 +265,12 @@ void setup()
     delay(2000);
 #endif
 
-  
 #if defined(__arm__) && defined(TEENSYDUINO)
 // This is for reading the internal reference voltage
   analogReference(EXTERNAL);
   analogReadResolution(12);
   analogReadAveraging(32);
 #endif
-
-
 
 // Buzzer uses pin 4
   pinMode(buzzerPin, OUTPUT);
@@ -427,7 +436,6 @@ void loop()
  // Check for when to Tx packet
  ////////////////////////////////////////////////////////////////////////////////////
  
-  lastTx = 0;
   lastTx = millis() - txTimer;
 
   // Only check the below if locked satellites < 3
@@ -436,78 +444,41 @@ void loop()
     if ( lastTx > 5000 ) {
         // Check for heading more than 25 degrees
         if ( (headingDelta < -25 || headingDelta >  25) && lastTxdistance > 5 ) {
-              Hd++;
-#ifdef DEBUG                
-            debug.println(F("*Head "));
-#endif            
-           
-            TxtoRadio();
-            lastTxdistance = 0;   // Ensure this value is zero before the next Tx
-            previousHeading = currentHeading;
-            // Reset the txTimer & lastTX for the below if statements
-            txTimer = millis(); 
-            lastTx = millis() - txTimer;
+            if (TxtoRadio(1)) {
+                lastTxdistance = 0;   // Ensure this value is zero before the next Tx
+                previousHeading = currentHeading;
+            }
         } // endif headingDelta
     } // endif lastTx > 5000
     
     if ( lastTx > 10000 ) {
          // check of the last Tx distance is more than 600m
          if ( lastTxdistance > 600 ) {  
-              Di++;
-#ifdef DEBUG                     
-            debug.println();
-            debug.println(F("*D > 600m ")); 
-            debug.print(F("lastTxd:"));
-            debug.println(lastTxdistance);
-#endif          
-          
-            TxtoRadio();
-            lastTxdistance = 0;   // Ensure this value is zero before the next Tx
-            // Reset the txTimer & lastTX for the below if statements            
-            txTimer = millis(); 
-            lastTx = millis() - txTimer;
-         } // endif lastTxdistance
+            if ( TxtoRadio(2) ) {
+                lastTxdistance = 0;   // Ensure this value is zero before the next Tx
+            }
+       } // endif lastTxdistance
     } // endif lastTx > 10000
     
     if ( lastTx >= txInterval ) {
         // Trigger Tx Tracker when Tx interval is reach 
         // Will not Tx if stationary bcos speed < 5 and lastTxDistance < 20
         if ( lastTxdistance > 20 ) {
-              Ti++;
-#ifdef DEBUG                    
-                   debug.println();
-                   debug.print(F("lastTx:"));
-                   debug.print(lastTx);
-                   debug.print(F(" txI:"));
-                   debug.print(txInterval);     
-                   debug.print(F(" lastTxd:"));
-                   debug.println(lastTxdistance);               
-                   debug.println(F("*TxI "));  
-
-#endif                                     
-                   TxtoRadio(); 
-                   
-                   // Reset the txTimer & lastTX for the below if statements   
-                   txTimer = millis(); 
-                   lastTx = millis() - txTimer;
+              TxtoRadio(3); 
         } // endif lastTxdistance > 20 
     } // endif of check for lastTx > txInterval
-
-    } // Endif check for satellites
+    
+    // Force a tx when 3 unique stations was received 
+    // Or 60 secs after last received station to prevent stale info on the distance 
+    if (  (rxStation > 2) || (( (rxStation > 0) && ( ((millis()-lastRx)/1000) > 60) )) )  {
+           TxtoRadio(4);
+     }
+   } // Endif check for satellites
+     
     // Check if the analog0 is plugged into 5V and more than 10 secs
     if ( analogRead(0) > 700 && (lastTx > 10000) ) {
-          Bn++;
-          buttonPressed = 1;
-#ifdef DEBUG                
-                debug.println();             
-                debug.println(analogRead(0));
-                debug.println(F("*B ")); 
- 
-#endif                                   
-                TxtoRadio(); 
-                // Reset the txTimer & lastTX for the below if statements  
-                txTimer = millis(); 
-                lastTx = millis() - txTimer;
+          buttonPressed = 1;                                  
+          TxtoRadio(5); 
      } // endif check analog0
 
      
@@ -524,37 +495,12 @@ void show_packet()
         // Only displasy if decode is true
 	if ( microaprs.decode_posit(packet, &call, &type, &posit, &lon, &lat, &pcomment, &pmsgTo, &pmsg, &pmsgID) ) {
 
-/* 
-#ifdef DEBUG    
-		debug.print("Input:");
-		debug.println(packet);
-		debug.print("Callsign:");
-		debug.print(call);
-		debug.print("  t:");
-                debug.print(type);                        
-		debug.print("  p:");
-		debug.print(posit);
-		debug.print("  comment:");
-		debug.println(pcomment);
-		debug.print(" ");
-		debug.print(wayPointLatitude,5);
-		debug.print("  ");
-		debug.print(wayPointLongitude,5);
-		debug.print(" ");
-		debug.print(bearing, 0);
-		debug.print("deg ");
-		debug.print(distanceToWaypoint,1);
-		debug.println("km");
-#endif
-*/
-
 	if (type == 58) // 58 = "!" = Message
 	{
 		if (startsWith(MYCALL, pmsgTo))
 		{
                     mCounter++;
 #ifdef OLED
-                    
                     oled.setCursor(2,0);
                     clear3Line();                        
                     oled.setCursor(2,0);
@@ -567,11 +513,6 @@ void show_packet()
                     // Beep 3 times
                     beep(3);
                     
-#ifdef DEBUG                
-  		    debug.print("Msg:");
-		    debug.println(pmsg);
-
-#endif
                 nextLine ^= 1 << 1;  // Toggle nextLine
 		}
 	}
@@ -595,6 +536,26 @@ void show_packet()
             if ( strlen(call) < 12 ) {
             lastRx = millis();
             packetDecoded++;
+            
+            // Append rx callsign into rxCallsign strings
+            // Do not add own callsign
+            if ( !startsWith(MYCALL,call) ) {
+                // Do not add duplicated callsign from digipeater packets
+        	if ( !rxCallsign.startsWith(call) ) {
+			rxCallsign.concat(call);
+                        lastCall = call;
+                        // Only send distance if GPS is locked AND less than 300km away
+                        if ( gps.satellites.value() > 3 && distanceToWaypoint < 300 ) {
+			    rxCallsign.concat("/");
+			    rxCallsign.concat(distanceToWaypoint);
+			    rxCallsign.concat("km ");
+                        } else {
+                            rxCallsign.concat(" ");
+                        }
+			rxStation++;
+                 }
+	    }
+
 #ifdef OLED
                 if ( !nextLine ) {                  
                     oled.setCursor(2,0);
@@ -686,13 +647,10 @@ void oledLine1() {
 
     oled.setCursor(1,0);
     oled.print("S:");   
-    //oled.print("000"); 
     oled.print((unsigned int)gps.speed.kmph());  
     oled.print(" C:");
-    //oled.print("000"); 
     oled.print((unsigned int)gps.course.deg());  
     oled.print(" A:");
-    //oled.print("0000"); 
     oled.print((unsigned int)gps.altitude.meters());
 } 
 
@@ -710,16 +668,7 @@ void oledLine2() {
     oled.print((unsigned int)(millis()-lastRx)/1000);  // Print the seconds since last Rx
 
     oled.setCursor(1,0);  
-/*    
-    oled.print("H:");
-    oled.print(Hd);
-    oled.print(" T:");
-    oled.print(Ti);
-    oled.print(" D:");
-    oled.print(Di);
-    oled.print(" B:");
-    oled.print(Bn);  
- */ 
+
     oled.print("M:");
     oled.print(mCounter);    // Messages received   
     oled.print(" B:");
@@ -741,7 +690,7 @@ void clear3Line() {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-void TxtoRadio() {
+boolean TxtoRadio(int type) {
   
      char tmp[10];
      float latDegMin, lngDegMin = 0.0;
@@ -753,73 +702,7 @@ void TxtoRadio() {
      lastTxLng = gps.location.lng();
      
      if ( lastTx > 6000 ) { // This prevent ANY condition to Tx below 6 secs
-#ifdef DEBUG                 
-       debug.print("Time/Date: ");
-       byte hour = gps.time.hour() +8; // GMT+8 is my timezone
-       byte day = gps.date.day();
-       
-       if ( hour > 23 ) {
-           hour = hour -24;
-           day++;
-       }  
-       if ( hour < 10 ) {
-       debug.print("0");       
-       }       
-       debug.print(hour);         
-       debug.print(":");  
-       if ( gps.time.minute() < 10 ) {
-       debug.print("0");       
-       }
-       debug.print(gps.time.minute());
-       debug.print(":");
-       if ( gps.time.second() < 10 ) {
-       debug.print("0");       
-       }       
-       debug.print(gps.time.second());
-       debug.print(" ");
-
-       if ( day < 10 ) {
-       debug.print("0");
-       }         
-       debug.print(day);
-       debug.print("/");
-       if ( gps.date.month() < 10 ) {
-       debug.print("0");       
-       }
-       debug.print(gps.date.month());
-       debug.print("/");
-       debug.print(gps.date.year());
-       debug.println();
-
-       debug.print("G:");
-       debug.print(lastTxLat,5);
-       debug.print(" ");
-       debug.print(lastTxLng,5);
-       debug.println();
-
-       debug.print("S:");           
-       debug.print(gps.satellites.value());
-       debug.print(" H:");
-       debug.print(gps.hdop.value());
-       debug.print(" km/h:");           
-       debug.print((unsigned int) gps.speed.kmph());
-       debug.print(" C:");
-       debug.print((unsigned int) gps.course.deg());          
-       debug.print(" A:");
-       debug.print((unsigned int) gps.altitude.meters());
-       debug.print("m");
-       debug.println();
-
-       debug.print(F("H:"));
-       debug.print(homeDistance,2);
-       debug.print(" L:");  
-       debug.print(lastTxdistance,2);
-       debug.println(); 
-     
-       debug.print(F("Last "));  
-       debug.println((float)lastTx/1000); 
-#endif             
- 
+             
        latDegMin = convertDegMin(lastTxLat);
        lngDegMin = convertDegMin(lastTxLng);
 
@@ -871,19 +754,27 @@ void TxtoRadio() {
        cmtOut.concat("/A=");
        cmtOut.concat(padding((int)gps.altitude.feet(),6));
        cmtOut.concat(" Seq:");
-       cmtOut.concat(txCounter);      
+       cmtOut.concat(txCounter);
+       
+       if ( rxCallsign.length() > 0 ) {
+           cmtOut.concat(" ");       
+           cmtOut.concat(rxCallsign);     // Send out all the Rx callsign & dist  
+       }
+        
+       // Send out the type of Tx trigger
+       switch (type) {
+         case 1:   cmtOut.concat(" H"); break;
+         case 2:   cmtOut.concat(" D"); break;
+         case 3:   cmtOut.concat(" T"); break;
+         case 4:   cmtOut.concat(" R"); break;
+         case 5:   cmtOut.concat(" B"); break;
+         default: break;
+       }
+
        cmtOut.concat(" ");       
        cmtOut.concat(COMMENT); 
+       
 
-#ifdef DEBUG          
-       debug.print("STR: ");
-       debug.print(latOut);  
-       debug.print(" ");       
-       debug.print(lngOut);  
-       debug.print(" ");
-       debug.print(cmtOut);  
-       debug.println(); 
-#endif         
        
        // This condition is ONLY for button pressed ( do not sent out position if not locked )
        if ( gps.satellites.value() > 3 ) {
@@ -895,10 +786,17 @@ void TxtoRadio() {
        Serial.println(cmtOut);
        digitalWrite(buzzerPin,LOW);     
        delay(50);
+       
+       // Clear the rxCallsign contents & counters
+       rxCallsign="";
+       rxStation=0;
+       lastRx = 0;
        }
        
-       
         // Only send status/version every 10 packets to save packet size  
+        // Sample status display
+        // >SVTrackR v1.5a 5.14V S:10 B:0 U:135m Seq:20
+        
        if ( ( txCounter % 10 == 0 ) || buttonPressed ) {
   
          digitalWrite(buzzerPin,HIGH);  // Turn on buzzer
@@ -914,35 +812,37 @@ void TxtoRadio() {
          } else {
              cmtOut.concat("0");
          }    
+         // R - number of packets decoded
+         cmtOut.concat(" R:");         
+         cmtOut.concat(packetDecoded);
+         
          cmtOut.concat(" U:");         
          cmtOut.concat(millis()/60000);
-         cmtOut.concat(" Seq:");         
+         cmtOut.concat("m Seq:");         
          cmtOut.concat(txCounter);
-#ifdef DEBUG          
-       debug.print("STR: ");
-       debug.print(cmtOut);  
-       debug.println(); 
-#endif  
+ 
         delay(200);   
         digitalWrite(buzzerPin,LOW);   // Turn off buzzer
         
         smartDelay(5000);
         Serial.println(cmtOut);
-       } 
+       } //endof txCounter / buttonPressed 
        
-       // Reset the txTimer & Tx internal   
+       
+       // Reset all tx timer & Tx variables   
        txInterval = 80000;
-       buttonPressed = 0;
-       lastTx = 0;
-#ifdef DEBUG               
-       debug.print(F("F:"));
-       debug.print(Mem);
-       debug.print(" U:");
-       debug.println((float) millis()/1000);
-#endif     
-
+       buttonPressed = 0;    
        txCounter++;
-     } // endif lastTX
+       txTimer = millis(); 
+       lastTx = 0;
+       
+       // Tx success, return TRUE
+         return 1;
+     } else {
+         return 0; 
+     }// endif lastTX > 6000
+     
+     
 } // endof TxtoRadio()
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
