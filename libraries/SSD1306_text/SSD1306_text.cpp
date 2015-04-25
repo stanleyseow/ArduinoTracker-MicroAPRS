@@ -121,9 +121,9 @@ size_t SSD1306_text::write(uint8_t c) {
     col_ += 7;	// x7 font
     if (c < 32 || c > 127) c = 127;
     c -= 32;
-    uint8_t *base = font + 5 * c;
+    const uint8_t *base = font + 5 * c;
     for (uint8_t i = 0; i < 5; i++ ) {
-      uint8_t b = pgm_read_byte(base + i);
+      uint8_t b =  pgm_read_byte(base + i);
       sendData(b);
     }
     for (uint8_t i=0; i<textSpacing_; i++) {
@@ -142,7 +142,7 @@ size_t SSD1306_text::write(uint8_t c) {
       if (row_+irow > SSD1306_LCDWIDTH - 1) break;
       if (irow > 0) setCursor(startRow+irow, startCol);
       for (uint8_t iSlice=0; iSlice<5; iSlice++) {
-        sourceSlice = pgm_read_byte(font + 5 * (c-32) + iSlice);
+        sourceSlice = (uint8_t) pgm_read_byte(font + 5 * (c-32) + iSlice);
         targetSlice = 0;
         targetBitMask = 0x01;
         sourceBitMask = 0x01 << (irow*8/textSize_);
