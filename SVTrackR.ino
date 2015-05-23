@@ -1,11 +1,9 @@
 // Current Version
-#define VERSION "SVTrackR v1.6 " 
+#define VERSION "SVTrackR v1.61 " 
 
 /*
-
  SVTrackR ( Arduino APRS Tracker )
  Copyright (C) 2014 Stanley Seow <stanleyseow@gmail.com>
-
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
  version 2 as published by the Free Software Foundation.
@@ -90,7 +88,6 @@
  1 Dec 2014 ( v1.0 )
  - Added mic-e/compressed packets decoding from MicroAPRS libs
  - Ability to display received messages
-
  24 Dec 2014 ( v1.1 )
  - Added comment parsing codes from latest MicroAPRS libs
  - Added status ">" type parsing
@@ -121,6 +118,10 @@
   - changed TxtoRadio return value to boolean and reason for Tx trigger
   - removed unused variables  
   
+  4 May 2015 ( v1.61 stanleyseow )
+  - Change OLED callsign textsize 2
+  - single page packet decode
+  - minor changes to comment strings
 */
 
 // Needed this to prevent compile error for #defines
@@ -490,7 +491,6 @@ void show_packet()
 	char *posit, *pmsgTo, *call, *pcomment, *pmsg;
 	char type, pmsgID;
 	long lat, lon;
-        static boolean nextLine = 0;
 
         // Only displasy if decode is true
 	if ( microaprs.decode_posit(packet, &call, &type, &posit, &lon, &lat, &pcomment, &pmsgTo, &pmsg, &pmsgID) ) {
@@ -504,17 +504,17 @@ void show_packet()
                     oled.setCursor(2,0);
                     clear3Line();                        
                     oled.setCursor(2,0);
-                    oled.print("F:");
+                    //oled.print("F:");
+                    oled.setTextSize(2,1);
                     oled.print(call);
-                    oled.setCursor(3,0);
+                    oled.setTextSize(1,1);                    
+                    oled.setCursor(4,0);
                     oled.print("M:");
                     oled.print(pmsg);
 #endif                    
                     // Beep 3 times
                     beep(3);
-                    
-                nextLine ^= 1 << 1;  // Toggle nextLine
-		}
+                    		}
 	}
 	else // Not message, decode , calculate and display packets
 	{   		
@@ -542,58 +542,45 @@ void show_packet()
             if ( !startsWith(MYCALL,call) ) {
                 // Do not add duplicated callsign from digipeater packets
         	if ( !rxCallsign.startsWith(call) ) {
+			rxCallsign.concat(" ");
 			rxCallsign.concat(call);
                         lastCall = call;
                         // Only send distance if GPS is locked AND less than 300km away
                         if ( gps.satellites.value() > 3 && distanceToWaypoint < 300 ) {
 			    rxCallsign.concat("/");
 			    rxCallsign.concat(distanceToWaypoint);
-			    rxCallsign.concat("km ");
-                        } else {
-                            rxCallsign.concat(" ");
-                        }
+			    rxCallsign.concat("km");
+                        } 
 			rxStation++;
                  }
 	    }
 
 #ifdef OLED
-                if ( !nextLine ) {                  
+
                     oled.setCursor(2,0);
-                    clear3Line();
+                    clear6Line();
                     oled.setCursor(2,0);
+                    oled.setTextSize(2,1);
                     oled.print(call);
-                    oled.print(" ");
+                    oled.setTextSize(1,1);  
+
                     if (distanceToWaypoint < 1000 ) {
-                      oled.print(bearing, 0);
-                      oled.print("d ");                      
-                      oled.print(distanceToWaypoint,1); 
-                      oled.print("km");
+                        oled.setCursor(4,0);                    
+                        oled.print("B:");
+                        oled.print(bearing, 0);
+                        oled.print("deg D:");                      
+                        oled.print(distanceToWaypoint,1); 
+                        oled.print("km");
+                        oled.setCursor(5,0);
+                        oled.print(pcomment);
+                    } else {
+                        oled.setCursor(4,0);
+                        oled.print(pcomment);
                     }
 
-                    oled.setCursor(3,0);
-                    oled.print(pcomment);
-                } else {
-                    oled.setCursor(5,0);
-                    clear3Line();
-                    oled.setCursor(5,0);
-                    oled.print(call);
-                    oled.print(" ");                    
-                    if (distanceToWaypoint < 1000 ) {
-                      oled.print(bearing, 0);
-                      oled.print("d ");                      
-                      oled.print(distanceToWaypoint,1);
-                      oled.print("km");                    
-                    }
-                    
-                    oled.setCursor(6,0);
-                    oled.print(pcomment);                  
-                }  // endif !nextLine
 #endif
                 
 	      } // endif check for valid packets
-
-              // Toggle the nextLine                     
-              nextLine ^= 1 << 1;  
 	}
     } // endif microaprs.decode_posit()
 }
@@ -684,6 +671,11 @@ void clearLine() {
 void clear3Line() {
      for ( int i=0;i<64;i++) { oled.write(' '); } 
 }
+
+void clear6Line() {
+     for ( int i=0;i<128;i++) { oled.write(' '); } 
+}
+
 #endif
 
 
@@ -757,7 +749,6 @@ boolean TxtoRadio(int type) {
        cmtOut.concat(txCounter);
        
        if ( rxCallsign.length() > 0 ) {
-           cmtOut.concat(" ");       
            cmtOut.concat(rxCallsign);     // Send out all the Rx callsign & dist  
        }
         
