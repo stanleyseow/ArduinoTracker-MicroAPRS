@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v1.61 " 
+#define VERSION "SVTrackR v1.62 " 
 
 /*
  SVTrackR ( Arduino APRS Tracker )
@@ -122,6 +122,11 @@
   - Change OLED callsign textsize 2
   - single page packet decode
   - minor changes to comment strings
+
+  31 Aug 2015 ( V1.62 stanleyseow )
+  - Adding support for I2C 16x2 for Dashboard LCD
+  - Added 3 screens for speed/sats/headings, date/pos and other stats
+  - Added N/E/S/W into main screen
 */
 
 // Needed this to prevent compile error for #defines
@@ -149,6 +154,8 @@ char packet[BUFLEN];
 int buflen = 0;
 bool showmsg, showstation;
 
+
+
 float latitude = 0.0;
 float longitude = 0.0;
 float wayPointLatitude, wayPointLongitude;
@@ -160,8 +167,21 @@ const int radiusOfEarth = 6371; // in km
 // Turn on/off debug, on by default on pin 2,3
 #undef DEBUG
 
+// Turn on/off 16x2 I2C LCD
+#define I2C16X2
+
+
+// ifdef for I2C LCD
+#ifdef I2C16X2
+	#include <Wire.h>
+	#include <LiquidCrystal_I2C.h>
+	LiquidCrystal_I2C lcd(0x27,16,2); // 0x20 is adresss for LCC 16x2
+#endif
+
+
 // Turn on/off 0.96" OLED
-#define OLED
+
+#undef OLED
 
 #ifdef DEBUG 
   #if defined(__arm__) && defined(TEENSYDUINO)
@@ -225,6 +245,10 @@ unsigned int rxStation;
 unsigned int mCounter = 0;
 unsigned int txCounter = 0;
 unsigned long txTimer = 0;
+#ifdef I2C16X2
+bool packetDisplay = 0;
+unsigned long displayTime = 0;
+#endif
 unsigned long lastTx = 0;
 unsigned long lastRx = 0;
 unsigned long txInterval = 80000L;  // Initial 80 secs internal
@@ -245,6 +269,112 @@ float lastTxdistance, homeDistance, base = 0.0;
 // Used in the future for sending messages, commands to the tracker
 const unsigned int MAX_DEBUG_INPUT = 30;
 
+
+#ifdef I2C16X2
+/// LCD Large fonts
+// the 8 arrays that form each segment of the custom numbers
+
+/*
+byte LT[8] = 
+{
+  B00011,
+  B00111,
+  B01111,
+  B01111,
+  B01111,
+  B01111,
+  B01111,
+  B01111
+};*/
+
+byte UB[8] =
+{
+  B11111,
+  B11111,
+  B11111,
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B00000
+};
+
+byte RT[8] =
+{
+  B11100,
+  B11110,
+  B11111,
+  B11111,
+  B11111,
+  B11111,
+  B11111,
+  B11111
+};
+
+byte LL[8] =
+{
+  B01111,
+  B01111,
+  B01111,
+  B01111,
+  B01111,
+  B01111,
+  B00111,
+  B00011
+};
+
+byte LB[8] =
+{
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B11111,
+  B11111,
+  B11111
+};
+/*
+byte LR[8] =
+{
+  B11111,
+  B11111,
+  B11111,
+  B11111,
+  B11111,
+  B11111,
+  B11110,
+  B11100
+};
+*/
+byte UMB[8] =
+{
+  B11111,
+  B11111,
+  B11111,
+  B00000,
+  B00000,
+  B00000,
+  B11111,
+  B11111
+};
+byte LMB[8] =
+{
+  B11111,
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B11111,
+  B11111,
+  B11111
+};
+
+int x = 0;
+
+/// LCD Large fonts
+#endif
+
 //////////////////////////////////////////////////////////////////////////////
 // setup()
 //////////////////////////////////////////////////////////////////////////////
@@ -252,6 +382,26 @@ const unsigned int MAX_DEBUG_INPUT = 30;
 void setup()
 {
   
+#ifdef I2C16X2
+  lcd.init();
+
+  lcd.createChar(1,RT);  
+  lcd.createChar(2,UB);
+//  lcd.createChar(3,LL);
+  lcd.createChar(4,LB);
+//  lcd.createChar(5,LR);  
+  lcd.createChar(6,UMB);
+  lcd.createChar(0,LMB);
+//  lcd.createChar(8,LT);
+  
+  lcd.backlight();
+  lcd.begin(16,2);
+  
+  lcd.print(VERSION);
+  delay(1000);
+#endif
+
+
 #ifdef OLED
     oled.init();
     oled.clear();                 // clear screen
@@ -404,17 +554,39 @@ void loop()
      digitalWrite(ledPin,LOW);     
    }
 
+
+
+
+
+    if ( gps.time.second() % 10 == 0 ) { 
 #ifdef OLED
       oled.setTextSize(1,1);        // 5x7 characters, pixel spacing = 1
-
-  // Swap the 1st 2 lines of display of gps info or rx/tx packets every 5 secs 
-  if ( gps.time.second() % 10 == 0 ) {
       oledLine2();
+#endif      
   } else if ( gps.time.second() % 5 == 0 ) {
+#ifdef OLED    
+      oled.setTextSize(1,1);        // 5x7 characters, pixel spacing = 1
       oledLine1();
+#endif
   } 
   
-#endif
+// I2C LCD addons
+#ifdef I2C16X2
+  if ( packetDisplay ) {
+     // Do not overwrite the decoded packet
+     // display packetDecoded for 10 secs
+     if ( millis() - displayTime > 10000 ) {
+           packetDisplay = 0;
+     }
+  } else if ( gps.time.second() > 30 && gps.time.second() < 36 ) {
+      lcdScreen3(); // Screen1 is speed / sats
+  } else if ( gps.time.second() > 50 && gps.time.second() < 56 ) { 
+      lcdScreen2(); // Screen2 is Altitide / bearing / distBase / Uptime / Rx / Tx / Msgs
+   } else {
+      lcdScreen1(); // Screen1 is speed / sats 
+   }
+#endif     
+
 
 // Change the Tx internal based on the current speed
 // This change will not affect the countdown timer
@@ -579,11 +751,118 @@ void show_packet()
                     }
 
 #endif
+
+#ifdef I2C16X2
+          packetDisplay = 1;
+          displayTime = millis();
+          lcdScreen4(call,pcomment);
+#endif
                 
 	      } // endif check for valid packets
 	}
     } // endif microaprs.decode_posit()
 }
+
+
+
+#ifdef I2C16X2
+void lcdScreen1() {
+  lcd.clear();
+  displayLargeSpeed((unsigned int)gps.speed.kmph());
+}
+
+void lcdScreen2() {
+
+  lcd.clear();  
+  lcd.setCursor(0,0);
+  lcd.print("B:");
+  lcd.print(base,0);     // Max 999
+  
+  lcd.setCursor(6,0);
+  lcd.print("T:");      
+  lcd.print(txCounter);  // Max 999
+
+   // Max 2 digits10w
+ 
+  lcd.setCursor(12,0);
+  lcd.print("R:");      
+  lcd.print(packetDecoded);  // Max 99
+
+
+  //lcd.setCursor(0,1);
+  //lcd.print("M:");
+  //lcd.print(mCounter);    // Messages received  
+  
+  //lcd.setCursor(0,1);
+  //lcd.print("C:");
+  //lcd.print((unsigned int)gps.course.deg());  
+
+  lcd.setCursor(0,1);
+  lcd.print("U:");
+  lcd.print((float) millis()/60000,0); // Max 999
+
+  lcd.setCursor(6,1);  
+  lcd.print("A:");
+  lcd.print((unsigned int)gps.altitude.meters()); // Max 9999
+   
+  //lcd.setCursor(12,1);
+  //lcd.print("L:");
+  //lcd.print((unsigned int)(millis()-lastRx)/1000);  // Print the seconds since last Rx
+
+}
+
+void lcdScreen3() {
+     lcd.clear();  
+     lcd.setCursor(0,0);
+  
+     // Convert to GMT+8
+     byte hour = gps.time.hour() +8;
+      
+     if ( hour > 23 ) {
+         hour = 0;
+     }  
+     if ( hour < 10 ) {
+        lcd.print("0");       
+     }  
+       lcd.print(hour);         
+       lcd.print(":");  
+     if ( gps.time.minute() < 10 ) {
+        lcd.print("0");       
+     }
+       lcd.print(gps.time.minute());
+       lcd.print(":");
+     if ( gps.time.second() < 10 ) {
+       lcd.print("0");       
+     }       
+       lcd.print(gps.time.second());
+
+
+  lcd.print(" H:");
+  lcd.print(gps.hdop.value());
+  
+  lcd.setCursor(0,1);
+  lcd.print(gps.location.lat(),4);
+  lcd.setCursor(8,1);
+  lcd.print(gps.location.lng(),4);
+}
+
+void lcdScreen4(char *callsign, char *comment ) {
+ 
+       lcd.setCursor(0,0);
+       lcd.clear();
+       lcd.print(callsign);
+            if (distanceToWaypoint < 100 ) {
+                lcd.print(" ");
+                lcd.print(distanceToWaypoint,1);
+                lcd.print("km");
+            }
+       lcd.setCursor(0,1);
+       comment[16] = 0;
+       lcd.print(comment);
+}
+
+#endif
+
 
 // Functions for OLED
 #ifdef OLED
@@ -842,6 +1121,16 @@ boolean TxtoRadio(int type) {
 void configModem() {
 // Functions to configure the callsign, ssid, path and other settings
 
+#ifdef I2C16X2
+	lcd.clear();
+	lcd.setCursor(0,0);
+	lcd.print("Config:");
+	lcd.setCursor(0,1);
+	lcd.print(MYCALL);
+	lcd.print("-");
+	lcd.print(CALL_SSID);
+#endif
+
 #ifdef OLED
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
     clearLine();
@@ -897,6 +1186,17 @@ void configModem() {
   digitalWrite(ledPin,LOW);    
   Serial.println("V1");      
   delay(100);
+
+#ifdef I2C16X2
+	lcd.clear();
+	lcd.setCursor(0,0);
+	lcd.print("Done...");
+	lcd.setCursor(0,1);
+	lcd.print(MYCALL);
+	lcd.print("-");
+	lcd.print(CALL_SSID);
+	delay(1000);
+#endif
 
 #ifdef OLED
     oled.setCursor(1,0);          // move cursor to row 1, pixel column 100
@@ -1061,4 +1361,348 @@ void beep(int i) {
     i--; 
   }
 }
+
+#ifdef I2C16X2
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+// LCD Large fonts
+void displayLargeSpeed(int num) {
+  
+  int digit4 =  num / 1000;
+  int digit3 = (num % 1000) / 100;
+  int digit2 = (num % 100) / 10;
+  int digit1 =  num % 10;
+  
+  
+  x = 0;
+  switch (digit3) {
+  
+   case 0: 
+       // Do not display first zero
+       //custom00();
+       break;
+   case 1:
+       custom1();
+       break;   
+   case 2:
+       custom2();
+       break; 
+   case 3:
+       custom3();
+       break; 
+   case 4:
+       custom4();
+       break; 
+   case 5:
+       custom5();
+       break; 
+   case 6:
+       custom6();
+       break; 
+   case 7:
+       custom7();
+       break; 
+   case 8:
+       custom8();
+       break; 
+   case 9:
+       custom9();
+       break;        
+   default:
+       break;
+  }
+  
+    x = 4;
+    switch (digit2) {
+  
+   case 0: 
+       custom00();
+       break;
+   case 1:
+       custom1();
+       break;   
+   case 2:
+       custom2();
+       break; 
+   case 3:
+       custom3();
+       break; 
+   case 4:
+       custom4();
+       break; 
+   case 5:
+       custom5();
+       break; 
+   case 6:
+       custom6();
+       break; 
+   case 7:
+       custom7();
+       break; 
+   case 8:
+       custom8();
+       break; 
+   case 9:
+       custom9();
+       break;        
+   default:
+       break;
+  }
+  
+  x = 8;
+    switch (digit1) {
+  
+   case 0: 
+       custom00();
+       break;
+   case 1:
+       custom1();
+       break;   
+   case 2:
+       custom2();
+       break; 
+   case 3:
+       custom3();
+       break; 
+   case 4:
+       custom4();
+       break; 
+   case 5:
+       custom5();
+       break; 
+   case 6:
+       custom6();
+       break; 
+   case 7:
+       custom7();
+       break; 
+   case 8:
+       custom8();
+       break; 
+   case 9:
+       custom9();
+       break;        
+   default:
+       break;
+  }
+  
+    if ( gps.satellites.value() < 10 ) {
+          lcd.setCursor(14,0);
+          lcd.print(gps.satellites.value());
+          lcd.print("s");
+    } else {
+          lcd.setCursor(13,0);
+          lcd.print(gps.satellites.value());
+          lcd.print("s");
+    }   
+    
+    //lcd.print("S");
+
+    // Print degree or N/S/E/W headings
+    lcd.setCursor(12,1);
+    if ( gps.course.deg() < 10 ) {
+          lcd.print("00");
+          lcd.print(gps.course.deg(),0);
+          lcd.print("d");          
+    } else if ( gps.course.deg() < 100 ) {
+          lcd.print("0");
+          lcd.print(gps.course.deg(),0);
+          lcd.print("d");
+    } else {
+          lcd.print(gps.course.deg(),0);
+          lcd.print("d");          
+    }
+      
+    
+    /*
+    unsigned int headingDegrees = (unsigned int)gps.course.deg();
+
+      if (headingDegrees < 0 || headingDegrees > 360) {
+	}
+	else if (headingDegrees >= 0 && headingDegrees <= 11)
+	{
+		lcd.print("  N");
+	}
+	else if (headingDegrees > 349 && headingDegrees <= 360)
+	{
+  		lcd.print("  N");
+	}
+	else if (headingDegrees > 11 && headingDegrees <= 34)
+	{
+		lcd.print("NNE");
+	}
+	else if (headingDegrees > 34 && headingDegrees <= 56)
+	{
+		lcd.print(" NE");
+	}
+	else if (headingDegrees > 56 && headingDegrees <= 79)
+	{
+		lcd.print("ENE");
+	}
+	else if (headingDegrees > 79 && headingDegrees <= 101)
+	{
+		lcd.print("  E");
+	}
+	else if (headingDegrees > 101 && headingDegrees <= 124)
+	{
+		lcd.print("ESE");
+	}
+	else if (headingDegrees > 124 && headingDegrees <= 146)
+	{
+		lcd.print(" SE");
+	}
+	else if (headingDegrees > 146 && headingDegrees <= 169)
+	{
+		lcd.print("SSE");
+	}
+	else if (headingDegrees > 169 && headingDegrees <= 191)
+	{
+		lcd.print("  S");
+	}
+	else if (headingDegrees > 191 && headingDegrees <= 214)
+	{
+		lcd.print("SSW");
+	}
+	else if (headingDegrees > 214 && headingDegrees <= 236)
+	{
+		lcd.print(" SW");
+	}
+	else if (headingDegrees > 236 && headingDegrees <= 259)
+	{
+		lcd.print("WSW");
+	}
+	else if (headingDegrees > 259 && headingDegrees <= 281)
+	{
+		lcd.print("  W");
+	}
+	else if (headingDegrees > 281 && headingDegrees <= 304)
+	{
+		lcd.print("WNW");
+	}
+	else if (headingDegrees > 304 && headingDegrees <= 326)
+	{
+		lcd.print(" NW");
+	}
+	else if (headingDegrees > 326 && headingDegrees <= 349)
+	{
+		lcd.print("NNW");
+	}
+*/
+
+}
+
+
+void custom00()
+{ // uses segments to build the number 0
+  lcd.setCursor(x, 0); 
+  lcd.write(255);  
+  lcd.write(2); 
+  lcd.write(255);
+  lcd.setCursor(x, 1); 
+  lcd.write(255);  
+  lcd.write(4);  
+  lcd.write(255);
+}
+
+void custom1()
+{
+  lcd.setCursor(x,0);
+  lcd.write(2);
+  lcd.write(255);
+  lcd.setCursor(x+1,1);
+  lcd.write(255);
+}
+
+void custom2()
+{
+  lcd.setCursor(x,0);
+  lcd.write(6);
+  lcd.write(6);
+  lcd.write(255);
+  lcd.setCursor(x, 1);
+  lcd.write(255);
+  lcd.write(0);
+  lcd.write(0);
+}
+
+void custom3()
+{
+  lcd.setCursor(x,0);
+  lcd.write(6);
+  lcd.write(6);
+  lcd.write(255);
+  lcd.setCursor(x, 1);
+  lcd.write(0);
+  lcd.write(0);
+  lcd.write(255); 
+}
+
+void custom4()
+{
+  lcd.setCursor(x,0);
+  lcd.write(255);
+  lcd.write(4);
+  lcd.write(255);
+  lcd.setCursor(x+2, 1);
+  lcd.write(255);
+}
+
+void custom5()
+{
+  lcd.setCursor(x,0);
+  lcd.write(255);
+  lcd.write(6);
+  lcd.write(6);
+  lcd.setCursor(x, 1);
+  lcd.write(0);
+  lcd.write(0);
+  lcd.write(255);
+}
+
+void custom6()
+{
+  lcd.setCursor(x,0);
+  lcd.write(255);
+  lcd.write(6);
+  lcd.write(6);
+  lcd.setCursor(x, 1);
+  lcd.write(255);
+  lcd.write(0);
+  lcd.write(255);
+}
+
+void custom7()
+{
+  lcd.setCursor(x,0);
+  lcd.write(2);
+  lcd.write(2);
+  lcd.write(255);
+  lcd.setCursor(x+1, 1);
+  lcd.write(255);
+}
+
+void custom8()
+{
+  lcd.setCursor(x,0);
+  lcd.write(255);
+  lcd.write(6);
+  lcd.write(255);
+  lcd.setCursor(x, 1);
+  lcd.write(255);
+  lcd.write(0);
+  lcd.write(255);
+}
+
+void custom9()
+{
+  lcd.setCursor(x,0);
+  lcd.write(255);
+  lcd.write(6);
+  lcd.write(255);
+  lcd.setCursor(x+2, 1);
+  lcd.write(255);
+}
+
+#endif
+
+
 
