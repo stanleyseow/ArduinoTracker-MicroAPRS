@@ -1,5 +1,5 @@
 // Current Version
-#define VERSION "SVTrackR v1.62 " 
+#define VERSION "SVTrackR v1.63 " 
 
 /*
  SVTrackR ( Arduino APRS Tracker )
@@ -127,6 +127,13 @@
   - Adding support for I2C 16x2 for Dashboard LCD
   - Added 3 screens for speed/sats/headings, date/pos and other stats
   - Added N/E/S/W into main screen
+
+    11 Apr 2016 ( V1.63 stanleyseow )
+  - Changed to 500km away station calculations
+  - Line 657
+  - rev13 PCB will change to pullup circuit and read using digitalRead() instead of analogRead
+
+
 */
 
 // Needed this to prevent compile error for #defines
@@ -175,7 +182,9 @@ const int radiusOfEarth = 6371; // in km
 #ifdef I2C16X2
 	#include <Wire.h>
 	#include <LiquidCrystal_I2C.h>
-	LiquidCrystal_I2C lcd(0x27,16,2); // 0x20 is adresss for LCC 16x2
+//	LiquidCrystal_I2C lcd(0x27,16,2); // 0x20 is adresss for LCC 16x2
+  LiquidCrystal_I2C lcd(0x3F,16,2); // 0x20 is adresss for LCC 16x2
+
 #endif
 
 
@@ -215,6 +224,8 @@ const int radiusOfEarth = 6371; // in km
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const byte buzzerPin = 4;
+const byte ledPin = 6;
+
 
 // Defines for OLED 128x64 
 #ifdef OLED
@@ -228,10 +239,6 @@ const byte buzzerPin = 4;
 #define OLED_CS 0 // OLED Not used
 #define OLED_RST 10 // OLED Label RST
 SSD1306_text oled(OLED_DC, OLED_RST, OLED_CS);
-// Move ledPin to 6
-const byte ledPin = 6;
-#else
-const byte ledPin = 13;
 #endif
 
 // Varables for Packet Decode
@@ -649,6 +656,9 @@ void loop()
    } // Endif check for satellites
      
     // Check if the analog0 is plugged into 5V and more than 10 secs
+
+    // rev13 PCB will change to pullup circuit and read using digitalRead() instead of analogRead
+    
     if ( analogRead(0) > 700 && (lastTx > 10000) ) {
           buttonPressed = 1;                                  
           TxtoRadio(5); 
@@ -717,8 +727,8 @@ void show_packet()
 			rxCallsign.concat(" ");
 			rxCallsign.concat(call);
                         lastCall = call;
-                        // Only send distance if GPS is locked AND less than 300km away
-                        if ( gps.satellites.value() > 3 && distanceToWaypoint < 300 ) {
+                        // Only send distance if GPS is locked AND less than 500km away
+                        if ( gps.satellites.value() > 3 && distanceToWaypoint < 500 ) {
 			    rxCallsign.concat("/");
 			    rxCallsign.concat(distanceToWaypoint);
 			    rxCallsign.concat("km");
@@ -851,7 +861,7 @@ void lcdScreen4(char *callsign, char *comment ) {
        lcd.setCursor(0,0);
        lcd.clear();
        lcd.print(callsign);
-            if (distanceToWaypoint < 100 ) {
+            if (distanceToWaypoint < 500 ) {
                 lcd.print(" ");
                 lcd.print(distanceToWaypoint,1);
                 lcd.print("km");
@@ -1703,6 +1713,5 @@ void custom9()
 }
 
 #endif
-
 
 
