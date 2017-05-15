@@ -34,7 +34,6 @@ Xloader to load this hex image to the Arduino / Mini Pro :-
 ![SVTrack LCD](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrack_LCD.jpg) 
 
 ![SVTrack PCB](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrack_PCB.jpg)    
->>>>>>> Stashed changes
     
 ![SVTrackR with OLED](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrackROLED.jpg)
 
