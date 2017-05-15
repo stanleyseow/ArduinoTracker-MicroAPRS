@@ -30,9 +30,6 @@ Xloader to load this hex image to the Arduino / Mini Pro :-
     4. Select UNO for UNO or Duemilanove/328 for Mini Pro
     5. Select the COM port and press Upload
     
-<<<<<<< Updated upstream
-![SVTrackR PCB](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrack_PCB.jpg)    
-=======
 
 ![SVTrack LCD](https://raw.githubusercontent.com/stanleyseow/ArduinoTracker-MicroAPRS/master/photos/SVTrack_LCD.jpg) 
 
