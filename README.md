@@ -1,7 +1,7 @@
 Arduino APRS SVTrackR
 =====================
 
- - Written by Stanley Seow ( 9W2SVT / KG7OOY )
+ - Written by Stanley Seow ( 9W2SVT / N5SVT )
  - e-mail : stanleyseow@gmail.com
  
  *** Pls refer to the top of the source code for version history and updated instructions.
